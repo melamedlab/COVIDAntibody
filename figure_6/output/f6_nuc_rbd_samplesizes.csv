@@ -1,0 +1,16 @@
+month,immunosuppression_med_reviewed,Sample_Size,Target
+1,FALSE,7,nuc
+1,TRUE,35,nuc
+3,FALSE,8,nuc
+3,TRUE,28,nuc
+6,FALSE,8,nuc
+6,TRUE,31,nuc
+12,FALSE,7,nuc
+12,TRUE,23,nuc
+1,FALSE,7,rbd
+1,TRUE,32,rbd
+3,FALSE,7,rbd
+3,TRUE,18,rbd
+6,FALSE,4,rbd
+6,TRUE,10,rbd
+12,TRUE,5,rbd

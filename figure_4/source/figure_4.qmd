@@ -1,0 +1,1284 @@
+---
+title: "Figure 4"
+format: html
+editor: visual
+---
+
+## Load Packages
+
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(interval)
+library(gridExtra)
+library(dplyr)
+library(ggbeeswarm)
+library(rstatix)
+```
+
+## Load Data
+
+```{r}
+setwd('/stor/work/Ehrlich_COVID19/analysis/APH')
+
+## nuc and rbd data
+combined_df_annotated <- read_csv('./data/combined_df_annotated_2023-05-09.csv')
+combined_df_annotated$peak_severity <-factor(combined_df_annotated$peak_severity,
+                                              levels=c("Control",
+                                                       "Asymptomatic",
+                                                       "Mild",
+                                                       "Severe",
+                                                       "Critical"))
+
+
+
+## sets of colors
+severity_colors_woctrl <- c("Asymptomatic" = "#00AFBB",
+                            "Mild" = "#E6B600", 
+                            "Severe" = "#FC4E07",
+                            "Critical" = "#88499D")
+
+severity_colors_hospstatus <- c("Non-Hospitalized" = "#05C012",
+                                "Hospitalized" = "#DF18BC")
+
+output_dir <- "../output/"
+```
+
+## Panel A and B
+
+### Filtering Data
+
+```{r}
+## nuc and rbd data
+data_nuc_rbd <- combined_df_annotated %>% filter(re_infection == FALSE)
+
+## calc 95% for controls
+out <- list()
+for(target in unique(data_nuc_rbd$assay)){
+  active_data <- data_nuc_rbd %>% filter(assay == target)
+  
+  quants <- active_data %>%
+    group_by(peak_severity, assay) %>%
+    dplyr::summarize(quant_95 = quantile(abs_conc_excel, 0.95)) %>%
+    filter(peak_severity == "Control")
+  
+  quants <- quants[, colnames(quants) != "peak_severity"]
+  out[target] <- list(quants)
+  
+}
+quants_nuc_rbd <- bind_rows(out)
+```
+
+### Plots
+
+```{r, fig.width = 6, fig.height = 3}
+timepoints <- c(1,3,6,12)
+
+## plots
+for(target in unique(data_nuc_rbd$assay)){
+  
+  active_data <- data_nuc_rbd %>% 
+    filter(month %in% timepoints) %>% 
+    filter(assay == target) %>%
+    mutate(month_f = factor(month, levels = c("1", "3", "6", "12"))) %>%
+    arrange(peak_severity, subject, month_f)
+  height <- 1000000
+  step_increase <- 0.18
+  
+  if(target == "rbd"){
+    active_data <- active_data %>% filter(collection_before_vax1 == TRUE)
+    step_increase <- 0.12}
+  
+  ## plot
+  p <- ggplot(active_data, aes(x=month_f, 
+                               y=abs_conc_excel, 
+                               color = peak_severity)) + 
+    theme_pubr() +
+    geom_hline(yintercept= 
+                 ifelse(target == "nuc",quants_nuc_rbd$quant_95[1],quants_nuc_rbd$quant_95[2]),
+               size=.7, linetype="dotted", color = "black") +
+    geom_boxplot(outlier.shape=NA) + 
+    geom_line(aes(group = subject), color = "lightgray", alpha = 0.4,
+              position = position_jitter(width = .4, height = 0, seed = 1)) +
+    geom_point(size=0.8,
+              position = position_jitter(width = .4, height = 0, seed = 1)) +
+    scale_color_manual(values = severity_colors_woctrl) +
+    scale_y_log10(breaks = scales::trans_breaks("log10", function(x) 10^x),
+                  labels = scales::trans_format("log10", 
+                                                scales::math_format(10^.x))) +
+    coord_cartesian(clip = "off") +
+    labs(x = "", 
+         y = ifelse(target == "nuc","Anti-N IgG (ng/L)",
+                    "Anti-RBD IgG (ng/L)")) +
+    scale_x_discrete(
+      labels=c(
+        "Asymptomatic" = "A",
+        "Mild" = "M",
+        "Severe" = "S",
+        "Critical" = "Crt")) +
+    facet_grid(~peak_severity,
+               scales = "fixed") +
+    theme_pubr() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.title=element_blank()) +
+    xlab("Months post positive SARS-CoV-2 PCR") +
+    theme(legend.position = "none") +
+    coord_cartesian(ylim = c(90,height), expand = TRUE)
+  
+  plot(p)
+  if(target == "nuc"){
+    ggsave(plot = p, filename = paste0(output_dir, "f4_",target,"_boxplot.pdf"),
+           width = 5.5, height = 2.5)
+  } else if(target == "rbd"){
+   ggsave(plot = p, filename = paste0(output_dir, "f4_",target,"_boxplot.pdf"),
+           width = 5.5, height = 2.5)
+   }
+  
+}
+```
+
+## Panels C through F 
+
+### Filtering Data
+
+```{r}
+
+data <- combined_df_annotated
+
+## calc 95% quantile for controls
+out <- list()
+for(target in unique(data$assay)){
+  active_data <- data %>% 
+    filter(assay == target)
+  quants <- active_data %>%
+    group_by(peak_severity, assay) %>%
+    dplyr::summarize(quant95_control = quantile(abs_conc_excel, 0.95)) %>%
+    filter(peak_severity == "Control")
+  quants <- quants[, colnames(quants) != "peak_severity"]
+  out[target] <- list(quants)
+}
+quants <- bind_rows(out)
+
+## joining quant with data
+data <- data %>% 
+  left_join(quants)
+
+## filter out controls and filter out odd months
+data <- data %>% 
+  filter(peak_severity != "Control") %>% 
+  filter(month %in% c(1,3,6,12)) %>% 
+  dplyr::select(subject, assay, month, abs_conc_excel, peak_severity, 
+         collection_before_vax1, re_infection, 
+         quant95_control, baseline_onemonth, covid_vax)
+
+length(unique(data[!is.na(data$covid_vax) & data$assay == "rbd",]$subject)) # cohort count
+
+## 3% of MEAN CONVALESCENT titers (all available timepoints per patient) 
+mean_conv_data <- data %>%
+  filter(!is.na(baseline_onemonth)) %>%
+  filter(!re_infection) %>%
+  filter(collection_before_vax1) %>%
+  dplyr::group_by(assay, subject) %>% 
+  dplyr::summarize(across(tidyr::starts_with("abs_conc_excel"), ~ mean(.)),
+                   total_timepoints_4_mean_conv = n()) %>%
+  dplyr::ungroup() %>% 
+  dplyr::rename(mean_convalescent = abs_conc_excel)
+  
+## join mean convalescent df
+data <- data %>% 
+  left_join(mean_conv_data) 
+
+## calc 1/2, 1/5, and 3% of 1-month titers and determine if event occurs (T) or not (F)
+data <- data %>% 
+  mutate(half_of_1m = baseline_onemonth/2,
+         below_half_1m = ifelse(abs_conc_excel<=half_of_1m,TRUE,FALSE),
+         threepercent_of_mean_conv = (3*mean_convalescent)/100,
+         below_threepercent_of_mean_conv = 
+           ifelse(abs_conc_excel<=threepercent_of_mean_conv,
+                                           TRUE,FALSE),
+         below_quant95_control = ifelse(abs_conc_excel<=quant95_control,
+                                        TRUE,FALSE))
+
+```
+
+### Nuc Below 95% Controls with Table
+
+```{r}
+#| echo: true
+
+active_assay <- "nuc"
+active_measure <- "below_quant95_control"
+active_data <- data
+
+## check to see who is valid and what timepoints are usable
+check <- active_data %>%
+  filter(!re_infection) %>%
+  filter(assay == active_assay)
+
+## create an Inf timpoints df
+inf_df <- data.frame()
+for(patients in unique(check$subject)){
+  inf_df <- rbind.data.frame(inf_df, data.frame(subject = patients,
+                                                assay = c("rbd", "nuc"),  
+                                                month = Inf, 
+                                                re_infection = FALSE, 
+                                                below_half_1m = TRUE, 
+                                                below_onefifth_1m = TRUE,
+                                                below_quant95_control = TRUE))}
+## create a 0 timepoints df
+zero_df <- data.frame()
+for(patients in unique(check$subject)){
+  zero_df <- rbind.data.frame(zero_df, data.frame(subject = patients,
+                                                  assay = c("rbd", "nuc"),
+                                                  month = 0,
+                                                  re_infection = FALSE,
+                                                  below_half_1m = FALSE,
+                                                  below_onefifth_1m = FALSE,
+                                                  below_quant95_control = FALSE))}
+  
+## incorporating Inf and 0 timepoints into data df
+check2 <- plyr::rbind.fill(active_data,inf_df,zero_df)%>%
+  filter(!re_infection) %>%
+  filter(assay == active_assay) 
+
+## grab maximum time point in which the active_measure is FALSE
+left_bounds <- check2 %>%
+  group_by(subject, assay) %>%
+  filter(!.data[[active_measure]]) %>%
+  slice_max(month)
+
+## grab minimum time point in which the active_measure is TRUE
+right_bounds <- check2 %>%
+  group_by(subject, assay) %>%
+  filter(.data[[active_measure]]) %>%
+  slice_min(month)
+
+## check for edge cases that might cause problems
+right_bounds$subject[!right_bounds$subject %in% left_bounds$subject]
+left_bounds$subject[!left_bounds$subject %in% right_bounds$subject]
+
+## join left and right bounds to create interval df
+censoring_bounds <- left_bounds %>%
+  dplyr::rename(left_bound = month) %>%
+  distinct(subject, assay, left_bound) %>%
+  inner_join(right_bounds %>%
+               dplyr::rename(right_bound = month) %>%
+               distinct(subject, assay, right_bound))
+
+## check for invalid intervals
+censoring_bounds[!(censoring_bounds$left_bound < censoring_bounds$right_bound),] 
+# subject assay left_bound right_bound
+# <dbl> <chr>      <dbl>       <dbl>
+# 1     293 nuc            3           1
+# 2     298 nuc           12           1
+# 3     308 nuc           12           1
+
+## manually correct invalid intervals
+surv_df <- censoring_bounds
+surv_df[surv_df$subject == 293,] <- data.frame(293,"nuc", 0, 1) 
+surv_df[surv_df$subject == 298,] <- data.frame(298,"nuc", 0, 1) 
+surv_df[surv_df$subject == 308,] <- data.frame(308,"nuc", 0, 1) 
+
+## join with metadata
+surv_df <- surv_df %>% 
+  dplyr::rename(left = left_bound, right = right_bound) %>% 
+  left_join(combined_df_annotated %>% 
+              filter(peak_severity!="Control") %>% 
+              distinct(subject, .keep_all=T) %>% 
+              dplyr::select(subject,peak_severity))
+
+## relevel peak severitty factor
+surv_df$peak_severity <- factor(surv_df$peak_severity,
+                                levels = c("Asymptomatic","Mild", 
+                                           "Severe", "Critical"),
+                                labels = c("Non-Hospitalized", 
+                                           "Non-Hospitalized", 
+                                           "Hospitalized", 
+                                           "Hospitalized"))
+
+## get count of subjects for specific intervals
+data_count <- surv_df %>% 
+  mutate(interval = paste0(left,"_",right)) %>% 
+  group_by(interval, peak_severity) %>% dplyr::count(interval)
+
+## getting decay rate, specifying an exponential distribution, parametrized by its one parameter lamba
+library(flexsurv)
+for (status in c("Non-Hospitalized", "Hospitalized")){
+  
+  surv_data <- surv_df
+  
+  if(grepl("_1m",active_measure)){
+    ## shifting timepoints so starting timepoint 1m becomes 0m 
+    ## flexsurvreg exponential distribution is for exp(-lambda*time) not for
+    ## exp(-lambda*time - 1) which is what would match our situation 
+    ## horizontal shift 1 unit in the opposite direction of the sign
+    surv_data$left <- surv_data$left-1
+    surv_data$right <- ifelse(is.infinite(surv_data$right),Inf,
+                              surv_data$right-1)
+  }
+  
+  # flexsurvreg doesn't handle 0s well so changing 0s to 1/30 of month aka 1d
+  surv_data$left <- pmax(1/30, surv_data$left)
+  expMod = flexsurvreg(
+    formula = Surv(time =left, time2 = right, type = "interval2") ~ 1, 
+    data = surv_data %>% filter(peak_severity==status), 
+    dist="exp" #,inits=c(1)
+  )
+  plot(expMod)
+  lambda = coef(lm(-log(est) ~ time, data=summary(expMod)))[["time"]]
+  analysis_desc <-  paste0(active_assay," ", active_measure, " ",
+                           status,
+                           " lambda = ", round(lambda,4))
+  print(analysis_desc)
+  curve(exp(-lambda*x), from=0, to=12, col="gold", lwd=5, lty=2, add=TRUE)
+  title(main = analysis_desc)
+}
+
+## run survival analysis (function calculates NPMLE by E-M algorithm)
+## function icfit from package 'interval' NOT 'intervals' relies on Bioconductor Icens
+fit <- icfit(Surv(left,right,type="interval2")~peak_severity, data=surv_df,
+             conf.int = T)
+summary(fit)
+plot(fit)
+
+## weighted logrank tests for interval-censored data (permutation form)
+## Asymptotic Logrank two-sample test, Sun (1996)'s scores
+fit.test.logrank1 <-ictest(Surv(left,right,type="interval2")~peak_severity, 
+                           data=surv_df, scores = "logrank1"); fit.test.logrank1
+## Asymptotic Logrank two-sample test, Finkelstein (1986)'s scores
+fit.test.logrank2 <-ictest(Surv(left, right, type = "interval2")~peak_severity,
+                           data = surv_df, initfit = fit.test.logrank1$fit, 
+                           scores = "logrank2"); fit.test.logrank2
+
+## extract survival analysis from model into df
+tmp.df1 <- data.frame(grp = c(rep(names(fit[["strata"]])[[1]],
+                                  fit[["strata"]][[1]]),
+                              rep(names(fit[["strata"]])[[2]],
+                                  fit[["strata"]][[2]])),
+                      interval = names(fit[["pf"]]),
+                      survival = fit[["pf"]]) 
+
+## adding origin (0,0)
+tmp.df2 <- data.frame(grp =c("peak_severity=Non-Hospitalized",
+                             "peak_severity=Hospitalized"), 
+                      interval = c("(0,0]","(0,0]"), 
+                      survival = c(0,0))
+
+## rbind tmp dfs
+tmp.df <- rbind(tmp.df1, tmp.df2)
+
+## transform df
+fit.df <- tmp.df  %>% 
+  mutate(time = ifelse(!grepl("\\(.*]",interval),
+                           gsub('.*\\,(.*)\\)','\\1',interval,perl=TRUE),
+                           gsub('.*\\,(.*)\\]', '\\1', interval, perl = TRUE)),
+         .after= interval) %>%
+  mutate(time = ifelse(time == "Inf","20",time)) %>% 
+  mutate(time = as.numeric(time)) %>% 
+  arrange(grp, time) %>% 
+  mutate(grp = gsub("peak_severity=", "",grp))
+
+## calculative cumulative percentage to decrease from total (100%)
+fit.df <- fit.df %>% 
+  dplyr::group_by(grp) %>% 
+  dplyr::mutate(csum = cumsum(survival),
+         csumSurvival = round((1-csum)*100,2)) %>% 
+  ungroup()
+
+## pulling confidence intervals
+CI_1 <- as.data.frame(fit$CI[[1]])
+CI_1$endtime <- c(CI_1$time[-1], Inf)
+CI_2 <- as.data.frame(fit$CI[[2]])
+CI_2$endtime <- c(CI_2$time[-1], Inf)
+CI_df <- rbind(CI_1, CI_2)
+CI_df$peak_severity <- factor(c(rep("Non-Hospitalized",
+                                    dim(CI_1)[1]), # check rep count
+                                rep("Hospitalized",
+                                    dim(CI_2)[1])), # check rep count
+                              levels = c("Non-Hospitalized", "Hospitalized"))
+
+## survival plot with ggplot2
+p1 <- 
+  ggplot(data = fit.df, aes(x = time, y = csumSurvival, color = grp)) + 
+  
+  ## CI dashed outline
+  geom_line(inherit.aes = F, 
+            data = CI_df %>% 
+              filter(!time %in% c(Inf, 12.000001)) %>%
+              filter(peak_severity == "Hospitalized"), 
+            alpha = 0.6, linetype = "dashed", color = "#DF18BC", 
+            aes(x= time, y= upper*100)) +
+   geom_line(inherit.aes = F, 
+             data = CI_df %>% 
+               filter(!time %in% c(Inf, 12.000001)) %>%
+               filter(peak_severity == "Hospitalized"), 
+             alpha = 0.6, linetype = "dashed", color = "#DF18BC", 
+             aes(x= time, y= lower*100)) +
+   geom_line(inherit.aes = F, 
+             data = CI_df %>% 
+               filter(!time %in% c(Inf, 12.000001)) %>%
+               filter(peak_severity == "Non-Hospitalized"), 
+             alpha = 0.6, linetype = "dashed", color = "#05C012", 
+             aes(x= time, y= upper*100)) +
+   geom_line(inherit.aes = F, 
+             data = CI_df %>% 
+               filter(!time %in% c(Inf, 12.000001)) %>%
+               filter(peak_severity == "Non-Hospitalized"), 
+             alpha = 0.6, linetype = "dashed", color = "#05C012", 
+             aes(x= time, y= lower*100)) +
+  
+  geom_line(linewidth = 1) + 
+  xlab("Time (months from PCR)") + 
+  ylab(ifelse(active_measure=="below_quant95_control",
+              "Percentage of patients above \n95% quantile of controls",
+              ifelse(active_measure == "below_half_1m",
+                     "Percentage of patients above \n50% of 1 month convalescent titers",
+                     "Percentage of patients above \n20% of 1 month convalescent titers"))) +
+  ggtitle(ifelse(active_assay=="nuc","Nucleocapsid","RBD")) +
+  scale_color_manual(values = severity_colors_hospstatus) +
+  scale_fill_manual(values = severity_colors_hospstatus) +
+  scale_x_continuous(breaks = c(0,1,3,6,12), limits = c(-.5, 13)) +
+  theme_pubr() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.title=element_blank())
+
+## survival table
+p2 <- check %>%
+  filter(!(subject %in% c(293, 298, 308) & month > 1)) %>%#filtering out edge cases
+  filter(assay == active_assay) %>%
+  filter(peak_severity != "Control") %>%
+  mutate(peak_severity = ifelse(peak_severity %in% c("Asymptomatic","Mild"),
+                                "Non-Hospitalized","Hospitalized")) %>%
+  group_by(month, peak_severity) %>%
+  dplyr::summarize(count = n(),
+                   below = sum(below_quant95_control)) %>%
+  mutate(label = paste0(count-below, "/", count)) %>%
+  ggplot(aes(x=month, y= peak_severity)) +
+  geom_text(aes(label = label)) +
+  scale_x_continuous(breaks = c(0,1,3,6,12), limits = c(-.5, 13)) +
+  theme_pubr() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.title=element_blank(),
+         axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text.x = element_blank()) +
+  ylab(" ") +
+  xlab(" ")
+
+## combining and aligning survival plot and survival table
+ggarrange(p1, p2, nrow = 2, ncol = 1, align = "v", heights = c(3.5, 1))
+
+## saving pdf
+ggsave(paste0(output_dir,"f4_",active_assay,"_",active_measure,".pdf"), width = 6, height = 4.25, units = "in")
+```
+
+### RBD Below 95% Controls with Table
+
+```{r}
+
+active_assay <- "rbd"
+active_measure <- "below_quant95_control"
+active_data <- data
+
+## check to see who is valid and what timepoints are usable
+check <- active_data %>%
+  filter(!re_infection) %>%
+  filter(assay == active_assay) %>% 
+  filter(collection_before_vax1) # for rbd only
+
+## create an Inf timpoints df
+inf_df <- data.frame()
+for(patients in unique(check$subject)){
+  inf_df <- rbind.data.frame(inf_df, data.frame(subject = patients,
+                                                assay = c("rbd", "nuc"),  
+                                                month = Inf, 
+                                                re_infection = FALSE,
+                                                collection_before_vax1 = TRUE,
+                                                below_half_1m = TRUE, 
+                                                below_onefifth_1m = TRUE,
+                                                below_quant95_control = TRUE))}
+## create a 0 timepoints df
+zero_df <- data.frame()
+for(patients in unique(check$subject)){
+  zero_df <- rbind.data.frame(zero_df, data.frame(subject = patients,
+                                                  assay = c("rbd", "nuc"),
+                                                  month = 0,
+                                                  re_infection = FALSE,
+                                                  collection_before_vax1 = FALSE,
+                                                  below_half_1m = FALSE,
+                                                  below_onefifth_1m = FALSE,
+                                                  below_quant95_control = FALSE))}
+  
+## incorporating Inf and 0 timepoints into data df
+check2 <- plyr::rbind.fill(active_data,inf_df,zero_df)%>%
+  filter(!re_infection) %>%
+  filter(assay == active_assay) %>% 
+  filter(collection_before_vax1) # for rbd only
+
+## grab maximum time point in which the active_measure is FALSE
+left_bounds <- check2 %>%
+  group_by(subject, assay) %>%
+  filter(!.data[[active_measure]]) %>%
+  slice_max(month)
+
+## grab minimum time point in which the active_measure is TRUE
+right_bounds <- check2 %>%
+  group_by(subject, assay) %>%
+  filter(.data[[active_measure]]) %>%
+  slice_min(month)
+
+## check for edge cases that might cause problems
+right_bounds$subject[!right_bounds$subject %in% left_bounds$subject]
+left_bounds$subject[!left_bounds$subject %in% right_bounds$subject]
+
+## join left and right bounds to create interval df
+censoring_bounds <- left_bounds %>%
+  dplyr::rename(left_bound = month) %>%
+  distinct(subject, assay, left_bound) %>%
+  inner_join(right_bounds %>%
+               dplyr::rename(right_bound = month) %>%
+               distinct(subject, assay, right_bound))
+
+## check for invalid intervals
+censoring_bounds[!(censoring_bounds$left_bound < censoring_bounds$right_bound),] 
+
+## manually correct invalid intervals
+surv_df <- censoring_bounds
+
+## join with metadata
+surv_df <- surv_df %>% 
+  dplyr::rename(left = left_bound, right = right_bound) %>% 
+  left_join(combined_df_annotated %>% 
+              filter(peak_severity!="Control") %>% 
+              distinct(subject, .keep_all=T) %>% 
+              select(subject,peak_severity))
+
+## relevel peak severitty factor
+surv_df$peak_severity <- factor(surv_df$peak_severity,
+                                levels = c("Asymptomatic","Mild", 
+                                           "Severe", "Critical"),
+                                labels = c("Non-Hospitalized", 
+                                           "Non-Hospitalized", 
+                                           "Hospitalized", 
+                                           "Hospitalized"))
+
+## get count of subjects for specific intervals
+data_count <- surv_df %>% 
+  mutate(interval = paste0(left,"_",right)) %>% 
+  group_by(interval, peak_severity) %>% dplyr::count(interval)
+
+## no decay rate calculated (see survival plot w/ table)
+
+## run survival analysis (function calculates NPMLE by E-M algorithm)
+## function icfit from package 'interval' NOT 'intervals' relies on Bioconductor Icens
+fit <- icfit(Surv(left,right,type="interval2")~peak_severity, data=surv_df,
+             conf.int = T)
+summary(fit)
+plot(fit)
+
+## no weighted logrank tests performed (see survival plot w/ table)
+
+## extract survival analysis from model into df
+tmp.df1 <- data.frame(grp = c(rep(names(fit[["strata"]])[[1]],
+                                  fit[["strata"]][[1]]),
+                              rep(names(fit[["strata"]])[[2]],
+                                  fit[["strata"]][[2]])),
+                      interval = c("(12,Inf]","(12,Inf]"),
+                      survival = c(0,0)) 
+
+## adding origin (0,0)
+tmp.df2 <- data.frame(grp =c("peak_severity=Non-Hospitalized",
+                             "peak_severity=Hospitalized"), 
+                      interval = c("(0,0]","(0,0]"), 
+                      survival = c(0,0))
+
+## rbind tmp dfs
+tmp.df <- rbind(tmp.df1, tmp.df2)
+
+## transform df
+fit.df <- tmp.df  %>% 
+  mutate(time = gsub('\\((.*)\\,.*', '\\1', interval, perl = TRUE),
+         .after= interval) %>%
+  mutate(time = ifelse(time == "Inf","20",time)) %>% 
+  mutate(time = as.numeric(time)) %>% 
+  arrange(grp, time) %>% 
+  mutate(grp = gsub("peak_severity=", "",grp))
+
+## calculative cumulative percentage to decrease from total (100%)
+fit.df <- fit.df %>% 
+  dplyr::group_by(grp) %>% 
+  dplyr::mutate(csum = cumsum(survival),
+         csumSurvival = round((1-csum)*100,2)) %>% 
+  ungroup()
+
+
+## pulling confidence intervals
+CI_1 <- as.data.frame(fit$CI[[1]])
+CI_1$endtime <- c(CI_1$time[-1], Inf)
+CI_2 <- as.data.frame(fit$CI[[2]])
+CI_2$endtime <- c(CI_2$time[-1], Inf)
+CI_df <- rbind(CI_1, CI_2)
+CI_df$peak_severity <- factor(c(rep("Non-Hospitalized",
+                                    dim(CI_1)[1]), # check rep count
+                                rep("Hospitalized",
+                                    dim(CI_2)[1])), # check rep count
+                              levels = c("Non-Hospitalized", "Hospitalized"))
+
+## survival plot with ggplot2
+p1 <- 
+  ggplot(data = fit.df, aes(x = time, y = csumSurvival, color = grp)) + 
+  
+  ## CI dashed outline
+  geom_line(inherit.aes = F,
+            data = CI_df %>%
+              filter(!time %in% c(Inf, 12.000001)) %>%
+              filter(peak_severity == "Hospitalized"),
+            alpha = 0.6, linetype = "dashed", color = "#DF18BC",
+            aes(x= time, y= upper*100)) +
+   geom_line(inherit.aes = F,
+             data = CI_df %>%
+               filter(!time %in% c(Inf, 12.000001)) %>%
+               filter(peak_severity == "Hospitalized"),
+             alpha = 0.6, linetype = "dashed", color = "#DF18BC",
+             aes(x= time, y= lower*100)) +
+   geom_line(inherit.aes = F,
+             data = CI_df %>%
+               filter(!time %in% c(Inf, 12.000001)) %>%
+               filter(peak_severity == "Non-Hospitalized"),
+             alpha = 0.6, linetype = "dashed", color = "#05C012",
+             aes(x= time, y= upper*100)) +
+   geom_line(inherit.aes = F,
+             data = CI_df %>%
+               filter(!time %in% c(Inf, 12.000001)) %>%
+               filter(peak_severity == "Non-Hospitalized"),
+             alpha = 0.6, linetype = "dashed", color = "#05C012",
+             aes(x= time, y= lower*100)) +
+  
+  geom_line(linewidth = 1) + 
+  xlab("Time (months from PCR)") + 
+  ylab(ifelse(active_measure=="below_quant95_control",
+              "Percentage of patients above \n95% quantile of controls",
+              ifelse(active_measure == "below_half_1m",
+                     "Percentage of patients above \n50% of 1 month convalescent titers",
+                     "Percentage of patients above \n20% of 1 month convalescent titers"))) +
+  ggtitle(ifelse(active_assay=="nuc","Nucleocapsid","RBD")) +
+  scale_color_manual(values = severity_colors_hospstatus) +
+  scale_fill_manual(values = severity_colors_hospstatus) +
+  scale_x_continuous(breaks = c(0,1,3,6,12), limits = c(-.5, 13)) +
+  scale_y_continuous(breaks = c(0,25,50,75,100), limits = c(-.5, 102)) +
+  theme_pubr() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.title=element_blank())
+
+## survival table
+p2 <- check %>%
+  filter(assay == active_assay) %>%
+  filter(peak_severity != "Control") %>%
+  mutate(peak_severity = ifelse(peak_severity %in% c("Asymptomatic","Mild"),
+                                "Non-Hospitalized","Hospitalized")) %>%
+  group_by(month, peak_severity) %>%
+  dplyr::summarize(count = n(),
+                   below = sum(below_quant95_control)) %>%
+  mutate(label = paste0(count-below, "/", count)) %>%
+  ggplot(aes(x=month, y= peak_severity)) +
+  geom_text(aes(label = label)) +
+  scale_x_continuous(breaks = c(0,1,3,6,12), limits = c(-.5, 13)) +
+  theme_pubr() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.title=element_blank(),
+         axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text.x = element_blank()) +
+  ylab(" ") +
+  xlab(" ")
+
+## combining and aligning survival plot and survival table
+ggarrange(p1, p2, nrow = 2, ncol = 1, align = "v", heights = c(3.5, 1))
+
+## saving pdf
+ggsave(paste0(output_dir,"f4_",active_assay,"_",active_measure,".pdf"), width = 6, height = 4.25, units = "in")
+```
+
+### Nuc Below Half of 1m with Table
+
+```{r}
+#| echo: true
+
+active_assay <- "nuc"
+active_measure <- "below_half_1m"
+active_data <- data
+
+## filtering out patients that have all timepoints below 95 control levels
+pts_below_95q_control <- active_data %>%
+  filter(assay == active_assay) %>% 
+  group_by(subject) %>% 
+  dplyr::summarize(all_collections_below_95q_control = 
+                     all(below_quant95_control)) %>% 
+  filter(all_collections_below_95q_control == TRUE) %>% 
+  pull(subject)
+
+## filtering out pts whose collection never rise above controls
+active_data <- active_data %>% 
+  filter(!(subject %in% pts_below_95q_control))
+
+## check to see who is valid and what timepoints are usable
+check <- active_data %>%
+  filter(!re_infection) %>%
+  filter(assay == active_assay) %>% 
+  filter(subject %in% active_data$subject[active_data$month == "1"])# only 4 < 1/2
+
+## create an Inf timpoints df
+inf_df <- data.frame()
+for(patients in unique(check$subject)){
+  inf_df <- rbind.data.frame(inf_df, data.frame(subject = patients,
+                                                assay = c("rbd", "nuc"),  
+                                                month = Inf, 
+                                                collection_before_vax1 = TRUE,
+                                                re_infection = FALSE, 
+                                                below_half_1m = TRUE, 
+                                                below_onefifth_1m = TRUE,
+                                                below_quant95_control = TRUE))}
+  
+## incorporating Inf timepoints into data df
+check2 <- plyr::rbind.fill(active_data,inf_df)%>%
+  filter(!re_infection) %>%
+  filter(assay == active_assay) %>% 
+  filter(subject %in% active_data$subject[active_data$month == "1"])# only 4 < 1/2
+
+## grab maximum time point in which the active_measure is FALSE
+left_bounds <- check2 %>%
+  group_by(subject, assay) %>%
+  filter(!.data[[active_measure]]) %>%
+  slice_max(month)
+
+## grab minimum time point in which the active_measure is TRUE
+right_bounds <- check2 %>%
+  group_by(subject, assay) %>%
+  filter(.data[[active_measure]]) %>%
+  slice_min(month)
+
+## check for edge cases that might cause problems
+right_bounds$subject[!right_bounds$subject %in% left_bounds$subject]
+left_bounds$subject[!left_bounds$subject %in% right_bounds$subject]
+
+## join left and right bounds to create interval df
+censoring_bounds <- left_bounds %>%
+  dplyr::rename(left_bound = month) %>%
+  distinct(subject, assay, left_bound) %>%
+  inner_join(right_bounds %>%
+               dplyr::rename(right_bound = month) %>%
+               distinct(subject, assay, right_bound))
+
+## check for invalid intervals
+censoring_bounds[!(censoring_bounds$left_bound < censoring_bounds$right_bound),] 
+# subject assay left_bound right_bound
+# <dbl> <chr>      <dbl>       <dbl>
+# 1     206 nuc           12           3
+# 2     340 nuc           12           6
+
+## manually correct invalid intervals
+surv_df <- censoring_bounds
+surv_df[surv_df$subject == 206,] <- data.frame(206,"nuc", 1, 3) 
+surv_df[surv_df$subject == 340,] <- data.frame(340,"nuc", 3, 6) 
+
+## join with metadata
+surv_df <- surv_df %>% 
+  dplyr::rename(left = left_bound, right = right_bound) %>% 
+  left_join(combined_df_annotated %>% 
+              filter(peak_severity!="Control") %>% 
+              distinct(subject, .keep_all=T) %>% 
+              select(subject,peak_severity))
+
+## relevel peak severitty factor
+surv_df$peak_severity <- factor(surv_df$peak_severity,
+                                levels = c("Asymptomatic","Mild", 
+                                           "Severe", "Critical"),
+                                labels = c("Non-Hospitalized", 
+                                           "Non-Hospitalized", 
+                                           "Hospitalized", 
+                                           "Hospitalized"))
+
+## get count of subjects for specific intervals
+data_count <- surv_df %>% 
+  mutate(interval = paste0(left,"_",right)) %>% 
+  group_by(interval, peak_severity) %>% dplyr::count(interval)
+
+
+## getting decay rate, specifying an exponential distribution, parametrized by its one parameter lamba
+library(flexsurv)
+for (status in c("Non-Hospitalized", "Hospitalized")){
+  
+  surv_data <- surv_df
+  
+  if(grepl("_1m",active_measure)){
+    ## shifting timepoints so starting timepoint 1m becomes 0m 
+    ## flexsurvreg exponential distribution is for exp(-lambda*time) 
+    ## ref:https://cran.r-project.org/web/packages/flexsurv/vignettes/distributions.pdf
+    ## not for exp(-lambda*time - 1) which is what would match our situation 
+    ## horizontal shift 1 unit in the opposite direction of the sign
+    surv_data$left <- surv_data$left-1
+    surv_data$right <- ifelse(is.infinite(surv_data$right),Inf,
+                              surv_data$right-1)
+  }
+  
+  # flexsurvreg doesn't handle 0s well so changing 0s to 1/30 of month aka 1d
+  surv_data$left <- pmax(1/30, surv_data$left)
+  expMod = flexsurvreg(
+    formula = Surv(time =left, time2 = right, type = "interval2") ~ 1, 
+    data = surv_data %>% filter(peak_severity==status), 
+    dist="exp" #,inits=c(1)
+  )
+  plot(expMod)
+  lambda = coef(lm(-log(est) ~ time, data=summary(expMod)))[["time"]]
+  analysis_desc <-  paste0(active_assay," ", active_measure, " ",
+                           status,
+                           " lambda = ", round(lambda,4))
+  print(analysis_desc)
+  curve(exp(-lambda*x), from=0, to=12, col="gold", lwd=5, lty=2, add=TRUE)
+  title(main = analysis_desc)
+}
+
+## run survival analysis (function calculates NPMLE by E-M algorithm)
+## function icfit from package 'interval' NOT 'intervals' relies on Bioconductor Icens
+fit <- icfit(Surv(left,right,type="interval2")~peak_severity, data=surv_df,
+             conf.int = T)
+summary(fit)
+plot(fit)
+
+## weighted logrank tests for interval-censored data (permutation form)
+## Asymptotic Logrank two-sample test, Sun (1996)'s scores
+fit.test.logrank1 <-ictest(Surv(left,right,type="interval2")~peak_severity, 
+                           data=surv_df, scores = "logrank1"); fit.test.logrank1
+## Asymptotic Logrank two-sample test, Finkelstein (1986)'s scores
+fit.test.logrank2 <-ictest(Surv(left, right, type = "interval2")~peak_severity,
+                           data = surv_df, initfit = fit.test.logrank1$fit, 
+                           scores = "logrank2"); fit.test.logrank2
+
+## extract survival analysis from model into df
+tmp.df1 <- data.frame(grp = c(rep(names(fit[["strata"]])[[1]],
+                                  fit[["strata"]][[1]]),
+                              rep(names(fit[["strata"]])[[2]],
+                                  fit[["strata"]][[2]])),
+                      interval = names(fit[["pf"]]),
+                      survival = fit[["pf"]]) 
+
+## adding origin (0,0)
+tmp.df2 <- data.frame(grp =c("peak_severity=Non-Hospitalized",
+                             "peak_severity=Hospitalized"), 
+                      interval = c("(0,0]","(0,0]"), 
+                      survival = c(0,0))
+
+## adding (0,1]
+tmp.df3 <- data.frame(grp =c("peak_severity=Non-Hospitalized",
+                             "peak_severity=Hospitalized"), 
+                      interval = c("(0,1]","(0,1]"), 
+                      survival = c(0,0))
+
+## rbind tmp dfs
+tmp.df <- rbind(tmp.df1, tmp.df2, tmp.df3)
+
+
+## transform df
+fit.df <- tmp.df  %>% 
+  mutate(time = ifelse(!grepl("\\(.*]",interval),
+                           gsub('.*\\,(.*)\\)','\\1',interval,perl=TRUE),
+                           gsub('.*\\,(.*)\\]', '\\1', interval, perl = TRUE)),
+         .after= interval) %>%
+  mutate(time = ifelse(time == "Inf","20",time)) %>% 
+  mutate(time = as.numeric(time)) %>% 
+  arrange(grp, time) %>% 
+  mutate(grp = gsub("peak_severity=", "",grp))
+
+## calculative cumulative percentage to decrease from total (100%)
+fit.df <- fit.df %>% 
+  dplyr::group_by(grp) %>% 
+  dplyr::mutate(csum = cumsum(survival),
+         csumSurvival = round((1-csum)*100,2)) %>% 
+  ungroup()
+
+## pulling confidence intervals
+CI_1 <- as.data.frame(fit$CI[[1]])
+CI_1$endtime <- c(CI_1$time[-1], Inf)
+CI_2 <- as.data.frame(fit$CI[[2]])
+CI_2$endtime <- c(CI_2$time[-1], Inf)
+CI_df <- rbind(CI_1, CI_2)
+CI_df$peak_severity <- factor(c(rep("Non-Hospitalized",
+                                    dim(CI_1)[1]), # check rep count
+                                rep("Hospitalized",
+                                    dim(CI_2)[1])), # check rep count
+                              levels = c("Non-Hospitalized", "Hospitalized"))
+
+## survival plot with ggplot2
+p1 <- 
+  ggplot(data = fit.df, aes(x = time, y = csumSurvival, color = grp)) + 
+  
+  ## CI dashed outline
+  geom_line(inherit.aes = F, 
+            data = CI_df %>% 
+              filter(!time %in% c(Inf, 12.000001)) %>%
+              filter(time > 1) %>%
+              filter(peak_severity == "Hospitalized"), 
+            alpha = 0.6, linetype = "dashed", color = "#DF18BC", 
+            aes(x= time, y= upper*100)) +
+   geom_line(inherit.aes = F, 
+             data = CI_df %>% 
+               filter(!time %in% c(Inf, 12.000001)) %>%
+               filter(time > 1) %>%
+               filter(peak_severity == "Hospitalized"), 
+             alpha = 0.6, linetype = "dashed", color = "#DF18BC", 
+             aes(x= time, y= lower*100)) +
+   geom_line(inherit.aes = F, 
+             data = CI_df %>% 
+               filter(!time %in% c(Inf, 12.000001)) %>%
+               filter(time > 1) %>%
+               filter(peak_severity == "Non-Hospitalized"), 
+             alpha = 0.6, linetype = "dashed", color = "#05C012", 
+             aes(x= time, y= upper*100)) +
+   geom_line(inherit.aes = F, 
+             data = CI_df %>% 
+               filter(!time %in% c(Inf, 12.000001)) %>%
+               filter(time > 1) %>%
+               filter(peak_severity == "Non-Hospitalized"), 
+             alpha = 0.6, linetype = "dashed", color = "#05C012", 
+             aes(x= time, y= lower*100)) +
+  
+  geom_line(linewidth = 1) + 
+  xlab("Time (months from PCR)") + 
+  ylab(ifelse(active_measure=="below_quant95_control",
+              "Percentage of patients above \n95% quantile of controls",
+              ifelse(active_measure == "below_half_1m",
+                     "Percentage of patients above \n50% of 1 month convalescent titers",
+                     "Percentage of patients above \n20% of 1 month convalescent titers"))) +
+  ggtitle(ifelse(active_assay=="nuc","Nucleocapsid","RBD")) +
+  scale_color_manual(values = severity_colors_hospstatus) +
+  scale_fill_manual(values = severity_colors_hospstatus) +
+  scale_x_continuous(breaks = c(0,1,3,6,12), limits = c(-.5, 13)) +
+  theme_pubr() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.title=element_blank())
+
+## survival table
+p2 <- check %>%
+  filter(!(subject %in% c(206, 340) & month > 1)) %>%#filtering out edge cases
+  filter(assay == active_assay) %>%
+  filter(peak_severity != "Control") %>%
+  mutate(peak_severity = ifelse(peak_severity %in% c("Asymptomatic","Mild"),
+                                "Non-Hospitalized","Hospitalized")) %>%
+  group_by(month, peak_severity) %>%
+  dplyr::summarize(count = n(),
+                   below = sum(below_half_1m)) %>%
+  mutate(label = paste0(count-below, "/", count)) %>%
+  ggplot(aes(x=month, y= peak_severity)) +
+  geom_text(aes(label = label)) +
+  scale_x_continuous(breaks = c(0,1,3,6,12), limits = c(-.5, 13)) +
+  theme_pubr() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.title=element_blank(),
+         axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text.x = element_blank()) +
+  ylab(" ") +
+  xlab(" ")
+
+## combining and aligning survival plot and survival table
+ggarrange(p1, p2, nrow = 2, ncol = 1, align = "v", heights = c(3.5, 1))
+
+## saving pdf
+ggsave(paste0(output_dir,"f4_",active_assay,"_",active_measure,".pdf"), width = 6, height = 4.25, units = "in")
+```
+
+### RBD Below Half of 1m with Table
+
+```{r}
+#| echo: true
+
+active_assay <- "rbd"
+active_measure <- "below_half_1m"
+active_data <- data
+
+## filtering out patients that have all timepoints below 95 control levels
+pts_below_95q_control <- active_data %>%
+  filter(assay == active_assay) %>% 
+  group_by(subject) %>% 
+  dplyr::summarize(all_collections_below_95q_control = 
+                     all(below_quant95_control)) %>% 
+  filter(all_collections_below_95q_control == TRUE) %>% 
+  pull(subject)
+
+## filtering out pts whose collection never rise above controls
+active_data <- active_data %>% 
+  filter(!(subject %in% pts_below_95q_control))
+
+## check to see who is valid and what timepoints are usable
+check <- active_data %>%
+  filter(!re_infection) %>%
+  filter(assay == active_assay) %>% 
+  filter(collection_before_vax1) %>% 
+  filter(subject %in% active_data$subject[active_data$month == "1"])# only 4 < 1/2
+
+## create an Inf timpoints df
+inf_df <- data.frame()
+for(patients in unique(check$subject)){
+  inf_df <- rbind.data.frame(inf_df, data.frame(subject = patients,
+                                                assay = c("rbd", "nuc"),  
+                                                month = Inf, 
+                                                collection_before_vax1 = TRUE,
+                                                re_infection = FALSE, 
+                                                below_half_1m = TRUE, 
+                                                below_onefifth_1m = TRUE,
+                                                below_quant95_control = TRUE))}
+  
+## incorporating Inf timepoints into data df
+check2 <- plyr::rbind.fill(active_data,inf_df)%>%
+  filter(!re_infection) %>%
+  filter(assay == active_assay) %>% 
+  filter(collection_before_vax1) %>%
+  filter(subject %in% active_data$subject[active_data$month == "1"])# only 4 < 1/2
+
+## grab maximum time point in which the active_measure is FALSE
+left_bounds <- check2 %>%
+  group_by(subject, assay) %>%
+  filter(!.data[[active_measure]]) %>%
+  slice_max(month)
+
+## grab minimum time point in which the active_measure is TRUE
+right_bounds <- check2 %>%
+  group_by(subject, assay) %>%
+  filter(.data[[active_measure]]) %>%
+  slice_min(month)
+
+## check for edge cases that might cause problems
+right_bounds$subject[!right_bounds$subject %in% left_bounds$subject]
+left_bounds$subject[!left_bounds$subject %in% right_bounds$subject]
+
+## join left and right bounds to create interval df
+censoring_bounds <- left_bounds %>%
+  dplyr::rename(left_bound = month) %>%
+  distinct(subject, assay, left_bound) %>%
+  inner_join(right_bounds %>%
+               dplyr::rename(right_bound = month) %>%
+               distinct(subject, assay, right_bound))
+
+## check for invalid intervals
+censoring_bounds[!(censoring_bounds$left_bound < censoring_bounds$right_bound),] 
+
+## manually correct invalid intervals
+surv_df <- censoring_bounds
+
+## join with metadata
+surv_df <- surv_df %>% 
+  dplyr::rename(left = left_bound, right = right_bound) %>% 
+  left_join(combined_df_annotated %>% 
+              filter(peak_severity!="Control") %>% 
+              distinct(subject, .keep_all=T) %>% 
+              select(subject,peak_severity))
+
+## relevel peak severitty factor
+surv_df$peak_severity <- factor(surv_df$peak_severity,
+                                levels = c("Asymptomatic","Mild", 
+                                           "Severe", "Critical"),
+                                labels = c("Non-Hospitalized", 
+                                           "Non-Hospitalized", 
+                                           "Hospitalized", 
+                                           "Hospitalized"))
+
+## get count of subjects for specific intervals
+data_count <- surv_df %>% 
+  mutate(interval = paste0(left,"_",right)) %>% 
+  group_by(interval, peak_severity) %>% dplyr::count(interval)
+
+
+## getting decay rate, specifying an exponential distribution, parametrized by its one parameter lamba
+library(flexsurv)
+for (status in c("Non-Hospitalized", "Hospitalized")){
+  
+  surv_data <- surv_df
+  
+  if(grepl("_1m",active_measure)){
+    ## shifting timepoints so starting timepoint 1m becomes 0m 
+    ## flexsurvreg exponential distribution is for exp(-lambda*time) not for
+    ## exp(-lambda*time - 1) which is what would match our situation 
+    ## horizontal shift 1 unit in the opposite direction of the sign
+    surv_data$left <- surv_data$left-1
+    surv_data$right <- ifelse(is.infinite(surv_data$right),Inf,
+                              surv_data$right-1)
+  }
+  
+  # flexsurvreg doesn't handle 0s well so changing 0s to 1/30 of month aka 1d
+  surv_data$left <- pmax(1/30, surv_data$left)
+  expMod = flexsurvreg(
+    formula = Surv(time =left, time2 = right, type = "interval2") ~ 1, 
+    data = surv_data %>% filter(peak_severity==status), 
+    dist="exp" #,inits=c(1)
+  )
+  plot(expMod)
+  lambda = coef(lm(-log(est) ~ time, data=summary(expMod)))[["time"]]
+  analysis_desc <-  paste0(active_assay," ", active_measure, " ",
+                           status,
+                           " lambda = ", round(lambda,4))
+  print(analysis_desc)
+  curve(exp(-lambda*x), from=0, to=12, col="gold", lwd=5, lty=2, add=TRUE)
+  title(main = analysis_desc)
+}
+
+
+## run survival analysis (function calculates NPMLE by E-M algorithm)
+## function icfit from package 'interval' NOT 'intervals' relies on Bioconductor Icens
+fit <- icfit(Surv(left,right,type="interval2")~peak_severity, data=surv_df,
+             conf.int = T)
+summary(fit)
+plot(fit)
+
+## weighted logrank tests for interval-censored data (permutation form)
+## Asymptotic Logrank two-sample test, Sun (1996)'s scores
+fit.test.logrank1 <-ictest(Surv(left,right,type="interval2")~peak_severity, 
+                           data=surv_df, scores = "logrank1"); fit.test.logrank1
+## Asymptotic Logrank two-sample test, Finkelstein (1986)'s scores
+fit.test.logrank2 <-ictest(Surv(left, right, type = "interval2")~peak_severity,
+                           data = surv_df, initfit = fit.test.logrank1$fit, 
+                           scores = "logrank2"); fit.test.logrank2
+
+## extract survival analysis from model into df
+tmp.df1 <- data.frame(grp = c(rep(names(fit[["strata"]])[[1]],
+                                  fit[["strata"]][[1]]),
+                              rep(names(fit[["strata"]])[[2]],
+                                  fit[["strata"]][[2]])),
+                      interval = names(fit[["pf"]]),
+                      survival = fit[["pf"]]) 
+
+## adding origin (0,0)
+tmp.df2 <- data.frame(grp =c("peak_severity=Non-Hospitalized",
+                             "peak_severity=Hospitalized"), 
+                      interval = c("(0,0]","(0,0]"), 
+                      survival = c(0,0))
+
+## adding (0,1]
+tmp.df3 <- data.frame(grp =c("peak_severity=Non-Hospitalized",
+                             "peak_severity=Hospitalized"), 
+                      interval = c("(0,1]","(0,1]"), 
+                      survival = c(0,0))
+
+## rbind tmp dfs
+tmp.df <- rbind(tmp.df1, tmp.df2, tmp.df3)
+
+
+## transform df
+fit.df <- tmp.df  %>% 
+  mutate(time = ifelse(!grepl("\\(.*]",interval),
+                           gsub('.*\\,(.*)\\)','\\1',interval,perl=TRUE),
+                           gsub('.*\\,(.*)\\]', '\\1', interval, perl = TRUE)),
+         .after= interval) %>%
+  mutate(time = ifelse(time == "Inf","20",time)) %>% 
+  mutate(time = as.numeric(time)) %>% 
+  arrange(grp, time) %>% 
+  mutate(grp = gsub("peak_severity=", "",grp))
+
+## calculative cumulative percentage to decrease from total (100%)
+fit.df <- fit.df %>% 
+  dplyr::group_by(grp) %>% 
+  dplyr::mutate(csum = cumsum(survival),
+         csumSurvival = round((1-csum)*100,2)) %>% 
+  ungroup()
+
+
+## pulling confidence intervals
+CI_1 <- as.data.frame(fit$CI[[1]])
+CI_1$endtime <- c(CI_1$time[-1], Inf)
+CI_2 <- as.data.frame(fit$CI[[2]])
+CI_2$endtime <- c(CI_2$time[-1], Inf)
+CI_df <- rbind(CI_1, CI_2)
+CI_df$peak_severity <- factor(c(rep("Non-Hospitalized",
+                                    dim(CI_1)[1]), # check rep count
+                                rep("Hospitalized",
+                                    dim(CI_2)[1])), # check rep count
+                              levels = c("Non-Hospitalized", "Hospitalized"))
+
+## survival plot with ggplot2
+p1 <- 
+  ggplot(data = fit.df, aes(x = time, y = csumSurvival, color = grp)) + 
+  
+  ## CI dashed outline
+  geom_line(inherit.aes = F, 
+            data = CI_df %>% 
+              filter(!time %in% c(Inf, 12.000001)) %>%
+              filter(time > 1) %>%
+              filter(peak_severity == "Hospitalized"), 
+            alpha = 0.6, linetype = "dashed", color = "#DF18BC", 
+            aes(x= time, y= upper*100)) +
+   geom_line(inherit.aes = F, 
+             data = CI_df %>% 
+               filter(!time %in% c(Inf, 12.000001)) %>%
+               filter(time > 1) %>%
+               filter(peak_severity == "Hospitalized"), 
+             alpha = 0.6, linetype = "dashed", color = "#DF18BC", 
+             aes(x= time, y= lower*100)) +
+   geom_line(inherit.aes = F, 
+             data = CI_df %>% 
+               filter(!time %in% c(Inf, 12.000001)) %>%
+               filter(time > 1) %>%
+               filter(peak_severity == "Non-Hospitalized"), 
+             alpha = 0.6, linetype = "dashed", color = "#05C012", 
+             aes(x= time, y= upper*100)) +
+   geom_line(inherit.aes = F, 
+             data = CI_df %>% 
+               filter(!time %in% c(Inf, 12.000001)) %>%
+               filter(time > 1) %>%
+               filter(peak_severity == "Non-Hospitalized"), 
+             alpha = 0.6, linetype = "dashed", color = "#05C012", 
+             aes(x= time, y= lower*100)) +
+  
+  geom_line(linewidth = 1) + 
+  xlab("Time (months from PCR)") + 
+  ylab(ifelse(active_measure=="below_quant95_control",
+              "Percentage of patients above \n95% quantile of controls",
+              ifelse(active_measure == "below_half_1m",
+                     "Percentage of patients above \n50% of 1 month convalescent titers",
+                     "Percentage of patients above \n20% of 1 month convalescent titers"))) +
+  ggtitle(ifelse(active_assay=="nuc","Nucleocapsid","RBD")) +
+  scale_color_manual(values = severity_colors_hospstatus) +
+  scale_fill_manual(values = severity_colors_hospstatus) +
+  scale_x_continuous(breaks = c(0,1,3,6,12), limits = c(-.5, 13)) +
+  theme_pubr() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.title=element_blank())
+
+## survival table
+p2 <- check %>%
+  filter(!(subject %in% c(332) & month > 6)) %>% #filtering out edge cases
+  filter(assay == active_assay) %>%
+  filter(peak_severity != "Control") %>%
+  mutate(peak_severity = ifelse(peak_severity %in% c("Asymptomatic","Mild"),
+                                "Non-Hospitalized","Hospitalized")) %>%
+  group_by(month, peak_severity) %>%
+  dplyr::summarize(count = n(),
+                   below = sum(below_half_1m)) %>%
+  mutate(label = paste0(count-below, "/", count)) %>%
+  ggplot(aes(x=month, y= peak_severity)) +
+  geom_text(aes(label = label)) +
+  scale_x_continuous(breaks = c(0,1,3,6,12), limits = c(-.5, 13)) +
+  theme_pubr() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.title=element_blank(),
+         axis.line = element_blank(),
+        axis.ticks = element_blank(),
+        axis.text.x = element_blank()) +
+  ylab(" ") +
+  xlab(" ")
+
+## combining and aligning survival plot and survival table
+ggarrange(p1, p2, nrow = 2, ncol = 1, align = "v", heights = c(3.5, 1))
+
+## saving pdf
+ggsave(paste0(output_dir,"f4_",active_assay,"_",active_measure,".pdf"), width = 6, height = 4.25, units = "in")
+```
+
+## 

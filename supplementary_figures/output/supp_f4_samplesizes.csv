@@ -1,0 +1,17 @@
+month_f,peak_severity,collection_before_vax1,Sample_Size,Target
+1 month,Non-Hospitalized,Before 1st Vaccination,36,rbd2nuc
+1 month,Non-Hospitalized,After 1st Vaccination,1,rbd2nuc
+1 month,Hospitalized,Before 1st Vaccination,39,rbd2nuc
+1 month,Hospitalized,After 1st Vaccination,3,rbd2nuc
+3 months,Non-Hospitalized,Before 1st Vaccination,36,rbd2nuc
+3 months,Non-Hospitalized,After 1st Vaccination,11,rbd2nuc
+3 months,Hospitalized,Before 1st Vaccination,25,rbd2nuc
+3 months,Hospitalized,After 1st Vaccination,11,rbd2nuc
+6 months,Non-Hospitalized,Before 1st Vaccination,23,rbd2nuc
+6 months,Non-Hospitalized,After 1st Vaccination,21,rbd2nuc
+6 months,Hospitalized,Before 1st Vaccination,14,rbd2nuc
+6 months,Hospitalized,After 1st Vaccination,25,rbd2nuc
+12 months,Non-Hospitalized,Before 1st Vaccination,11,rbd2nuc
+12 months,Non-Hospitalized,After 1st Vaccination,25,rbd2nuc
+12 months,Hospitalized,Before 1st Vaccination,5,rbd2nuc
+12 months,Hospitalized,After 1st Vaccination,25,rbd2nuc

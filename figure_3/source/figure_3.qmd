@@ -1,0 +1,399 @@
+---
+title: "Figure 3"
+format: html
+editor: visual
+---
+
+## Load Packages
+
+```{r}
+library(ggpubr)
+library(tidyverse)
+library(Rmisc)
+library(scales)
+library(ggbeeswarm)
+library(gridExtra)
+library(grid)
+```
+
+## Load Data
+
+```{r}
+setwd('/stor/work/Ehrlich_COVID19/analysis/APH')
+
+## nuc and rbd data
+combined_df_annotated <- read_csv('./data/combined_df_annotated_2023-05-09.csv')
+combined_df_annotated$peak_severity  <- factor(combined_df_annotated$peak_severity,
+                                               levels = c("Control",
+                                                          "Asymptomatic",
+                                                          "Mild", 
+                                                          "Severe",
+                                                          "Critical"))
+## spike data
+combined_df_annotated_rbd_spike <- read_csv(
+  './data/combined_df_annotated_rbd_spike_2023-05-09.csv')
+combined_df_annotated_rbd_spike$peak_severity <- factor(
+  combined_df_annotated_rbd_spike$peak_severity,
+  levels = c("Control","Asymptomatic", "Mild", "Severe", "Critical"))
+
+## sets of colors
+before_after_vax_colors <- c("before" = "#7FB1D3",
+                             "after" = "#807DBA")
+before_after_vax_colors2 <- c("Before" = "#7FB1D3",
+                             "After" = "#807DBA")
+
+severity_colors_woctrl <- c("Asymptomatic" = "#00AFBB",
+                            "Mild" = "#E6B600", 
+                            "Severe" = "#FC4E07",
+                            "Critical" = "#88499D")
+
+severity_colors_hospstatus <- c("Non-Hospitalized" = "#05C012",
+                                "Hospitalized" = "#DF18BC")
+
+output_dir <- "../output/"
+```
+
+## Filtering Data
+
+```{r}
+
+data_nuc_rbd <- combined_df_annotated %>% filter(re_infection == FALSE)
+data_spike <- combined_df_annotated_rbd_spike %>% filter(re_infection == FALSE)
+timepoints = c(1,3,6,12)
+
+```
+
+## Panel A and B
+
+```{r, fig.width =5, fig.height = 4}
+
+data <- data_nuc_rbd
+
+## Initialize a data frame to store sample size information
+sample_sizes <- data.frame(
+  Panel = character(),
+  Target = character(),
+  Month = character(),
+  Peak_Severity = character(),
+  Collection_Before_Vax1 = character(),
+  Sample_Size = integer(),
+  stringsAsFactors = FALSE
+)
+
+## Loop through RBD and Nuc
+for(target in unique(data$assay)){
+
+  ## filter 
+  overall_data <- data %>%
+    filter(peak_severity != "Control") %>% 
+    mutate(peak_severity = factor(peak_severity, 
+                                  levels = c("Asymptomatic", "Mild",
+                                             "Severe", "Critical"),
+                                  labels = c("Non-Hospitalized",
+                                             "Non-Hospitalized", 
+                                             "Hospitalized", 
+                                             "Hospitalized"))) %>%
+    mutate(peak_severity = factor(peak_severity, levels = c("Non-Hospitalized", "Hospitalized"))) %>% 
+    filter(assay == target) %>% 
+    filter(month %in% timepoints) %>%
+    mutate(collection_before_vax1 = factor(collection_before_vax1,
+                                             levels = c(TRUE, FALSE),
+                                             labels = c("before","after"))) 
+  
+  one_months <- overall_data %>% filter(month == 1) %>%
+    dplyr::select(subject, assay, abs_conc_excel) %>%
+    dplyr::rename("one_month_abs_conc_excel" = "abs_conc_excel")
+  
+  ## Calc fold change relative to 1-month
+  overall_data <- overall_data %>%
+    left_join(one_months) %>%
+    mutate(percent_one_month = (abs_conc_excel - one_month_abs_conc_excel) / abs_conc_excel) %>%
+    mutate(fold_change = (abs_conc_excel)/one_month_abs_conc_excel) %>%
+    mutate(collection_before_vax1 = ifelse(collection_before_vax1 == 
+                                             "before", "Before",
+                                           ifelse(collection_before_vax1 == 
+                                                    "after", "After",
+                                                  collection_before_vax1))) %>%
+    mutate(month_f = ifelse(month == "1", paste0(month, " month"),
+                            paste0(month, " months"))) %>%
+    filter(month_f != "1 month") %>%
+    mutate(month_f = factor(month_f, levels = c("3 months", "6 months", "12 months")))
+  
+  ##### Calculate p-values separate for Hospitalized and Non-hospitalized ############
+  p.out <- data.frame()
+  for(grp in c("Hospitalized", "Non-Hospitalized")){
+    tmp.data <- overall_data %>%
+      filter(peak_severity == grp)
+    stat.test <- compare_means(fold_change ~ collection_before_vax1, 
+                                 data = tmp.data, paired = FALSE, 
+                               group.by = "month_f",
+                                 method = "wilcox.test")
+    stat.test$p.adj <- p.adjust(stat.test$p, "fdr")
+    stat.test$p.adj.signif <- symnum(stat.test$p.adj, 
+                                  corr = FALSE,
+                                  cutpoints = c(0,.001,.01,.05, 1), 
+                                  symbols = c("***","**","*"," "))
+    stat.test$peak_severity <- grp
+    p.out <- rbind.data.frame(p.out, stat.test)
+  }
+  
+  ##### For vax status compare hospitalized vs non hospitalized ############
+  p.out_HvsNH <- data.frame()
+  for(i in c(3,6,12)){
+    tmp.data <- overall_data %>%
+      filter(month == i)
+    stat.test <- compare_means(fold_change ~ peak_severity, 
+                                 data = tmp.data, paired = FALSE, 
+                               group.by = "collection_before_vax1",
+                                 method = "wilcox.test")
+    stat.test$p.adj <- p.adjust(stat.test$p, "fdr")
+    stat.test$p.adj.signif <- symnum(stat.test$p.adj, 
+                                  corr = FALSE,
+                                  cutpoints = c(0,.001,.01,.05, 1), 
+                                  symbols = c("***","**","*"," "))
+    stat.test$time <- i
+    stat.test$assay <- target
+    p.out_HvsNH <- rbind.data.frame(p.out_HvsNH, stat.test)
+  }
+
+  ## Calculate sample sizes
+  panel_sample_sizes <- overall_data %>%
+    group_by(month_f, peak_severity, collection_before_vax1) %>%
+    dplyr::summarize(Sample_Size = n(), .groups = 'drop') %>%
+    mutate(Target = target)
+  print(panel_sample_sizes)
+  sample_sizes <- rbind(sample_sizes, panel_sample_sizes)
+  
+  ## Plots
+  if(target == "rbd"){ylabel = "Fold change compared to\n1-month anti-RBD IgG Levels"
+  } else {ylabel = "Fold change compared to\n1-month anti-N IgG Levels"}
+  p <- ggbarplot(
+  overall_data %>% mutate(fold_change = log2(as.numeric(fold_change))),
+  x = "collection_before_vax1", y = "fold_change",
+  fill = "collection_before_vax1",
+  add = c("mean_se_","jitter"),
+  add.params = list(size = 0.4, alpha = 0.1),
+  facet = c("peak_severity", "month_f")
+  ) +
+    geom_hline(aes(yintercept =0), color = "black") +
+    scale_fill_manual(values = before_after_vax_colors2) +
+     coord_cartesian(ylim = c(-5,5)) +
+    labs(x = "1st vaccination",
+           y = ylabel) +
+    theme(legend.position="none",
+          legend.title = element_blank(),
+          axis.text.x = element_text(size=9)) +
+    stat_pvalue_manual(p.out %>% mutate(y.position = 4.8) %>%
+                         filter(p.adj <= 0.05), hide.ns = TRUE,
+                       label = "{p.adj.signif}")
+  plot(p)
+  
+  ggsave(paste0(output_dir,"f3_",target,".pdf"), 
+         plot = p, width = 5, height = 4, units = "in")
+
+}
+write_csv(sample_sizes, paste0(output_dir,"f3_nuc_rbd_samplesizes.csv"))
+```
+
+## Panel C
+
+```{r}
+data <- data_spike
+
+## Initialize a data frame to store sample size information
+sample_sizes <- data.frame(
+  Panel = character(),
+  Target = character(),
+  Month = character(),
+  Peak_Severity = character(),
+  Collection_Before_Vax1 = character(),
+  Sample_Size = integer(),
+  stringsAsFactors = FALSE
+)
+
+## Drop control group
+data <- data[data$peak_severity != "Control", ]
+data$peak_severity <- droplevels(data$peak_severity)
+data$peak_severity <- factor(data$peak_severity, 
+                             levels = c("Asymptomatic", "Mild", "Severe", "Critical"),
+                             labels = c("Non-Hospitalized", "Non-Hospitalized",
+                                        "Hospitalized", "Hospitalized"))
+
+## Modify collection_before_vax1 to ensure the order with 'Before' on top
+data$collection_before_vax1 <- factor(data$collection_before_vax1,
+                                      levels = c(TRUE, FALSE),  # order: Before, After
+                                      labels = c("Before 1st Vaccination", 
+                                                 "After 1st Vaccination"))
+
+## Refactor
+data <- data %>% 
+    mutate(month_f = ifelse(month == "1", paste0(month, " month"),
+                            paste0(month, " months"))) %>%
+    mutate(month_f = factor(month_f, levels = c("1 month", "3 months", "6 months", "12 months")))
+
+## Define new facet labels
+month.labs <- c("1 month", "3 months", "6 months", "12 months")
+names(month.labs) <- c("1", "3", "6", "12")
+
+## Loop through unique assays
+for (target in unique(data$assay)) {
+  
+  ## Filter data for current assay and timepoints
+  active_data <- data %>% 
+    filter(assay == target, month %in% timepoints)
+  
+  ## Calculate sample sizes
+    panel_sample_sizes <- active_data %>%
+    group_by(month_f, peak_severity, collection_before_vax1) %>%
+    dplyr::summarize(Sample_Size = n(), .groups = 'drop') %>%
+    mutate(Target = "rbd2spk")
+    sample_sizes <- rbind(sample_sizes, panel_sample_sizes)
+  
+  ## Plot
+  p <- ggplot(active_data, 
+              aes(x = peak_severity, 
+                  y = log_rbd_to_spike_ratio, 
+                  color = peak_severity)) +
+    theme_pubr() +
+    geom_hline(yintercept = 0, size = .2, alpha = 1, color = "black") +
+    geom_boxplot(outlier.shape = NA) +
+    geom_quasirandom(size = 0.8) +
+    scale_color_manual(values = severity_colors_hospstatus) +
+    labs(x = "", y = "Log10(Anti-RBD IgG/Anti-Spike IgG)") +
+    scale_x_discrete(labels = c("Non-Hospitalized" = "Non-H", "Hospitalized" = "H")) +
+    facet_grid(collection_before_vax1 ~ month, 
+               labeller = labeller(month = month.labs)) +
+    theme(legend.position = "none") +
+    geom_pwc(aes(group = peak_severity),
+             y.position = 2,
+             method = "wilcox.test", 
+             label = "{p.adj.signif}",  # or "{p.adj.format}"
+             p.adjust.method = "bonferroni", 
+             p.adjust.by = "panel",
+             hide.ns = TRUE)
+  
+  plot(p)
+  
+  ## Save plot
+  ggsave(paste0(output_dir, "f3_rbd2spk.pdf"), plot = p, width = 5, height = 4, units = "in")
+}
+write_csv(sample_sizes, paste0(output_dir,"f3_rbd2spk_samplesizes.csv"))
+```
+
+## Panel D
+
+```{r}
+
+data <- data_spike
+
+## Initialize a data frame to store sample size information
+sample_sizes <- data.frame(
+  Panel = character(),
+  Target = character(),
+  Month = character(),
+  Peak_Severity = character(),
+  Collection_Before_Vax1 = character(),
+  Sample_Size = integer(),
+  stringsAsFactors = FALSE
+)
+
+## filtering out people without vax info
+active_data <- data %>% 
+  filter(!is.na(calc_pcr_vax_1)) %>% 
+  filter(!is.na(log_rbd_to_spike_ratio))
+
+## adding 7 more days to vax date
+active_data <- active_data %>% 
+  mutate(calc_pcr_vax_1_plus7 = calc_pcr_vax_1 + 7) 
+
+## calc length of time from vax1
+active_data <- active_data %>% 
+  mutate(days_from_vax1_plus7 = calc_pcr_vax_1_plus7 - pcr_to_sample) 
+
+## collection right before vax1
+data_before <- active_data %>% 
+  filter(days_from_vax1_plus7 > 0) %>%
+  group_by(subject) %>% 
+  dplyr::slice(which.min(days_from_vax1_plus7)) %>% 
+  mutate(timepoint_from_vax1_plus7 = "before")
+
+## collection right after vax1
+data_after <- active_data %>% 
+  filter(days_from_vax1_plus7 <= 0) %>%
+  group_by(subject) %>% 
+  dplyr::slice(which.max(days_from_vax1_plus7)) %>% 
+  mutate(timepoint_from_vax1_plus7 = "after")
+
+## identify unpaired subjects (remember we want paired data)
+subject_not_in_databefore <- data_after[!(data_after$subject %in% 
+                                            data_before$subject),]$subject
+subject_not_in_dataafter <- data_before[!(data_before$subject %in% 
+                                            data_after$subject),]$subject
+subject_unpaired <- c(subject_not_in_databefore, subject_not_in_dataafter) 
+
+
+## filter out unpaired subjects and change orientation of days
+data_before <- data_before %>% 
+  filter(!(subject %in% subject_unpaired)) %>% 
+  mutate(days_from_vax1_plus7 = -1 * days_from_vax1_plus7)
+
+## filter out unpaired subjects and change orientation of days
+data_after <- data_after %>% 
+  filter(!(subject %in% subject_unpaired)) %>% 
+  mutate(days_from_vax1_plus7 = -1 * days_from_vax1_plus7)
+
+## full join
+data_comb <- merge(data_before[c("subject",
+                                 "peak_severity",
+                                 "re_infection",
+                                 "month",
+                                 "sympt_to_sample",
+                                 "pcr_to_sample",
+                                 "log_rbd_to_spike_ratio",
+                                 "days_from_vax1_plus7",
+                                 "timepoint_from_vax1_plus7")], 
+                   data_after[c("subject",
+                                "peak_severity",
+                                "re_infection",
+                                "month",
+                                "sympt_to_sample",
+                                "pcr_to_sample",
+                                "log_rbd_to_spike_ratio",
+                                "days_from_vax1_plus7",
+                                "timepoint_from_vax1_plus7")], 
+                   all = TRUE)
+
+## calc sample size
+panelD_sample_sizes <- data_comb %>%
+  group_by(timepoint_from_vax1_plus7) %>%
+  dplyr::summarize(Sample_Size = n(), .groups = 'drop') %>%
+  mutate(Target = "rbd2spk_paired")
+
+my_compairsons <- list(c("before", "after"))
+## plots
+p <- data_comb %>% 
+  filter(!(subject %in% subject_unpaired)) %>% 
+  mutate(timepoint_from_vax1_plus7 = factor(timepoint_from_vax1_plus7, 
+                                            levels = c("before","after"))) %>% 
+  ggplot(aes(
+    x=timepoint_from_vax1_plus7, 
+    y=log_rbd_to_spike_ratio)) + 
+  theme_pubr() +
+  geom_boxplot(outlier.shape=NA, color = "grey40") +
+  geom_quasirandom(aes(color = peak_severity), size = 0.8) +
+  scale_color_manual(values = severity_colors_woctrl) +
+  labs(x = "1st vaccination", 
+       y = "Log10(Anti-RBD IgG/Anti-Spike IgG)") +
+  stat_compare_means(paired = TRUE, comparisons = my_compairsons, label = "p.adj") +
+  theme(legend.position="right") +
+  theme(legend.title = element_blank()) +
+  geom_hline(yintercept=0, size=.2, alpha=1, 
+             color = "black", linetype = "dashed")
+
+plot(p)
+
+ggsave(paste0(output_dir,"f3_rbd2spk_paired.pdf"), 
+       width = 5, height = 3.75, units = "in")
+
+write_csv(panelD_sample_sizes, paste0(output_dir,"f3_rbd2spk_paired_samplesizes.csv"))
+```

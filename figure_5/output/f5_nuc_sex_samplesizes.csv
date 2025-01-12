@@ -1,0 +1,9 @@
+month,name,gender_at_birth,Sample_Size
+1,nuc,Female,40
+1,nuc,Male,39
+3,nuc,Female,45
+3,nuc,Male,38
+6,nuc,Female,43
+6,nuc,Male,40
+12,nuc,Female,38
+12,nuc,Male,28

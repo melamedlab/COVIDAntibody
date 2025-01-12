@@ -1,0 +1,398 @@
+---
+title: "Figure 2"
+format: html
+editor: visual
+---
+
+## Load Packages
+
+```{r}
+library(ggpubr)
+library(tidyverse)
+library(scales)
+library(ggbeeswarm)
+library(gridExtra)
+library(grid)
+library(rstatix)
+library(ordinal)
+library(gridExtra)
+```
+
+## Load Data
+
+```{r}
+setwd('/stor/work/Ehrlich_COVID19/analysis/APH')
+
+## nuc and rbd data
+combined_df_annotated <- read_csv('./data/combined_df_annotated_2023-05-09.csv')
+combined_df_annotated$peak_severity <-factor(combined_df_annotated$peak_severity,
+                                              levels=c("Control",
+                                                       "Asymptomatic",
+                                                       "Mild",
+                                                       "Severe",
+                                                       "Critical"))
+
+
+## spike data
+combined_df_annotated_rbd_spike <- read_csv('./data/combined_df_annotated_rbd_spike_2023-05-09.csv')
+combined_df_annotated_rbd_spike$peak_severity <-factor(combined_df_annotated_rbd_spike$peak_severity,levels = c("Control","Asymptomatic", "Mild", "Severe", "Critical"))
+
+## sets of colors
+severity_colors_woctrl <- c("Asymptomatic" = "#00AFBB",
+                            "Mild" = "#E6B600", 
+                            "Severe" = "#FC4E07",
+                            "Critical" = "#88499D")
+severity_colors_abbrev <- c("Ctr" = "#808080",
+                            "A" = "#00AFBB",
+                            "M" = "#E6B600", 
+                            "S" = "#FC4E07",
+                            "Crt" = "#88499D")
+severity_colors <- c("Control" = "#808080",
+                     "Asymptomatic" = "#00AFBB",
+                     "Mild" = "#E6B600", 
+                     "Severe" = "#FC4E07",
+                     "Critical" = "#88499D")
+
+output_dir <- "../output/"
+```
+
+## Filtering Data
+
+```{r}
+## nuc and rbd data
+data_nuc_rbd <- combined_df_annotated %>% filter(re_infection == FALSE)
+
+## spike data
+data_spike <- combined_df_annotated_rbd_spike %>% filter(re_infection == FALSE)
+## filter out nas
+data_spike <- data_spike %>% filter(!is.na(data_spike$abs_conc_excel_spike))
+
+## timepoints
+timepoints = c(1,3,6,12)
+
+## calc 95% for controls (nuc and rbd)
+out <- list()
+for(target in unique(data_nuc_rbd$assay)){
+  active_data <- data_nuc_rbd %>% filter(assay == target)
+  
+  quants <- active_data %>%
+    group_by(peak_severity, assay) %>%
+    dplyr::summarize(quant_95 = quantile(abs_conc_excel, 0.95)) %>%
+    filter(peak_severity == "Control")
+  
+  quants <- quants[, colnames(quants) != "peak_severity"]
+  out[target] <- list(quants)
+  
+}
+quants_nuc_rbd <- bind_rows(out)
+
+## calc 95% for controls (spike)
+quants_spike <- data_spike %>%
+  filter(!is.na(data_spike$abs_conc_excel_spike)) %>% 
+  group_by(peak_severity) %>%
+  dplyr::summarize(quant_95 = quantile(abs_conc_excel_spike, 0.95)) %>%
+  filter(peak_severity == "Control")
+
+```
+
+## Panel A & C
+
+#### Plots
+
+```{r}
+data <- data_nuc_rbd
+quants <- quants_nuc_rbd
+
+for(target in unique(data$assay)){
+  
+  active_data <- data %>% 
+    filter(month %in% timepoints) %>% 
+    filter(assay == target)
+  
+  if(target == "rbd"){
+    active_data <- active_data %>% filter(collection_before_vax1 == TRUE)}
+
+  ## Calculate sample size for each target and timepoint
+  sample_sizes <- active_data %>%
+    group_by(month, peak_severity) %>%
+    dplyr::summarize(n = n(), .groups = 'drop')
+  print(paste("Sample sizes for target:", target))
+  print(sample_sizes)
+  write_csv(sample_sizes, paste0(output_dir,"f2_",target,"_samplesizes.csv"))
+
+  ## obtaining p values
+  stat.test <- active_data %>%
+    group_by(month) %>%
+    wilcox_test(abs_conc_log10trans ~ peak_severity) %>% 
+    adjust_pvalue(method = "fdr") %>%
+    add_significance()
+  stat.test <- stat.test %>% add_y_position()
+  
+  ## new facet label names for supp variable
+  month.labs <- c("1 month", "3 months", "6 months","12 months") 
+  names(month.labs) <- c("1", "3", "6", "12")
+  
+  ## plots
+  p <- ggplot(active_data, aes(x=peak_severity, 
+                               y=abs_conc_excel, 
+                               color = peak_severity)) + 
+    theme_pubr() +
+    geom_hline(yintercept= 
+                 ifelse(target == "nuc",quants$quant_95[1],quants$quant_95[2]),
+               size=.7, linetype="dotted", color = "grey") +
+    geom_boxplot(outlier.shape=NA) + 
+    geom_quasirandom(size = 0.8)+
+    scale_color_manual(values = severity_colors_woctrl) +
+    scale_y_log10(breaks = scales::trans_breaks("log10", function(x) 10^x),
+                  labels = scales::trans_format("log10", 
+                                                scales::math_format(10^.x))) +
+    annotation_logticks(sides = "l", size = 0.3) + 
+    coord_cartesian(clip = "off") +
+    labs(title = ifelse(target == "nuc","Nucleocapsid","RBD"), 
+         x = "", 
+         y = ifelse(target == "nuc","Anti-N IgG (ng/L)",
+                    "Anti-RBD IgG (ng/L)")) +
+    scale_x_discrete(
+      labels=c(
+        "Asymptomatic" = "A",
+        "Mild" = "M",
+        "Severe" = "S",
+        "Critical" = "Crt")) +
+    facet_grid(~month,
+               labeller = labeller(month = month.labs),
+               scales = "fixed") +
+    theme(legend.position="right") +
+    theme(legend.title = element_blank()) +
+    stat_pvalue_manual(stat.test, label = "p.adj.signif", hide.ns = TRUE,
+                       tip.length = 0.01) +
+    coord_cartesian(ylim = c(30,70000000), expand = TRUE)
+  
+  plot(p)
+  ggsave(paste0(output_dir,"f2_",target,".pdf"),
+        width = 12, height = 3, units = "in")
+}
+```
+
+#### Global P Values
+
+```{r}
+data <- data_nuc_rbd
+quants <- quants_nuc_rbd
+
+## renaming columns
+data$name <- data$assay
+data$value <- data$abs_conc_log10trans
+
+## identifying the model's ordinal outcome levels WITHOUT CONTROLS
+data <- data[data$peak_severity != "Control",]
+data$peak_severity_ordinal <- factor(data$peak_severity,
+                                     levels = c("Asymptomatic", 
+                                                "Mild", 
+                                                "Severe", 
+                                                "Critical"))
+
+## cumulative linked model (Ordinal Package)
+out <- data.frame(matrix(ncol = 10, nrow = 0))
+for(active_antibody in unique(data$name)){
+  active_data <- data
+  active_data <- active_data %>% filter(name == active_antibody)
+  
+  if(active_antibody == "rbd"){
+    active_data <- active_data %>% filter(collection_before_vax1 == TRUE)}
+  
+  for(active_timepoint in seq_along(timepoints)){
+    data.tmp <- active_data %>%
+      filter(month == timepoints[active_timepoint])
+    
+    formula0 <- formula(
+      paste0("peak_severity_ordinal ~ gender_at_birth + age_factor"))
+    
+    formula1 <- formula(
+      paste0("peak_severity_ordinal ~ value + gender_at_birth + age_factor"))
+    
+    av <- anova(ordinal::clm(formula0, data = data.tmp),
+                ordinal::clm(formula1, data = data.tmp))
+    form1 <- ordinal::clm(formula1, data = data.tmp)
+    out.tmp <- c(active_antibody, 
+                 active_timepoint, 
+                 av$`Pr(>Chisq)`[2], 
+                 form1$coefficients)
+    names(out.tmp)[1:3] <- c("Target", "Month", "p-value")
+    
+    if(nrow(out) == 0){
+      out <- rbind.data.frame(out, names(out.tmp))
+    }
+    out <- rbind.data.frame(out, out.tmp)
+  }
+}
+colnames(out) <- out[1,]
+out <- out[-1,]
+out[3:ncol(out)] <- lapply(out[3:ncol(out)], function(x) signif(as.numeric(x), digits = 6))
+
+## pval reformatting
+out$p.adj <- p.adjust(out$`p-value`, "fdr")
+out$p.adj.format <- format.pval(out$p.adj, digits = 2)
+out$p.adj.signif <- symnum(out$p.adj, 
+                           corr = FALSE,
+                           cutpoints = c(0,.0001,.001,.01,.05, .1, 1), 
+                           symbols = c("****","***","**","*","."," "))
+out
+
+## pdfing table
+pdf(paste0(output_dir,"f2_nuc_rbd_global_pvals_table.pdf"), 
+    width = 15, height = 5)
+grid.table(out)
+dev.off()
+
+```
+
+## Panel B
+
+#### Plots
+
+```{r}
+
+data <- data_spike
+quants <- quants_spike
+
+for(target in unique(data$assay)){
+  
+  active_data <- data %>% 
+    filter(month %in% timepoints) %>% 
+    filter(assay == target)
+  
+  if(target == "rbd"){
+    active_data <- active_data %>% filter(collection_before_vax1 == TRUE)}
+  
+  ## Calculate sample size for each target and timepoint
+  sample_sizes <- active_data %>%
+    group_by(month, peak_severity) %>%
+    dplyr::summarize(n = n(), .groups = 'drop')
+  
+  print(paste("Sample sizes for target:", target))
+  print(sample_sizes)
+  write_csv(sample_sizes, paste0(output_dir,"f2_spk_samplesizes.csv"))
+  
+  ## obtaining p values
+  stat.test <- active_data %>%
+  group_by(month) %>%
+  wilcox_test(abs_conc_log10trans_spike ~ peak_severity) %>% 
+  adjust_pvalue(method = "fdr") %>%
+  add_significance()
+  stat.test <- stat.test %>% add_y_position()
+  
+  ## new facet label names for supp variable
+  month.labs <- c("1 month", "3 months", "6 months","12 months") 
+  names(month.labs) <- c("1", "3", "6", "12")
+  
+  ## plots
+    p <- ggplot(active_data, aes(x=peak_severity, 
+                               y=abs_conc_excel_spike, 
+                               color = peak_severity)) + 
+    theme_pubr() +
+    geom_hline(yintercept= quants$quant_95, 
+               size=.7, linetype="dotted", 
+               color = "grey") +
+    geom_boxplot(outlier.shape=NA) + 
+    geom_quasirandom(size = 0.8) +
+    scale_color_manual(values = severity_colors_woctrl) +
+    scale_y_log10(breaks = scales::trans_breaks("log10", function(x) 10^x),
+                  labels = scales::trans_format("log10", 
+                                                scales::math_format(10^.x))) +
+    annotation_logticks(sides = "l", size = 0.3) + 
+    coord_cartesian(clip = "off") +
+    labs(title = "Spike", 
+         x = "", 
+         y = "Anti-Spike IgG (ng/L)") +
+    scale_x_discrete(
+      labels=c(
+        "Asymptomatic" = "A",
+        "Mild" = "M",
+        "Severe" = "S",
+        "Critical" = "Crt")) +
+    facet_grid(~month,
+               labeller = labeller(month = month.labs),
+               scales = "fixed") +
+    theme(legend.position="right") +
+    theme(legend.title = element_blank()) +
+    stat_pvalue_manual(stat.test, label = "p.adj.signif", hide.ns = TRUE,
+                       tip.length = 0.01) +
+    coord_cartesian(ylim = c(30,70000000), expand = TRUE)
+  
+
+  plot(p)
+  ggsave(paste0(output_dir,"f2_spk.pdf"),
+        width = 12, height = 3, units = "in")
+}
+
+```
+
+#### Global P Values
+
+```{r}
+data <- data_spike
+quants <- quants_spike
+
+## renaming columns
+data$name <- data$assay
+data$value <- data$abs_conc_log10trans_spike
+
+## identifying the model's ordinal outcome levels WITHOUT CONTROLS
+data <- data[data$peak_severity != "Control",]; 
+data$peak_severity_ordinal <- factor(data$peak_severity,
+                                     levels = c("Asymptomatic", 
+                                                "Mild", 
+                                                "Severe", 
+                                                "Critical"))
+
+## cumulative linked model (Ordinal Package)
+out <- data.frame(matrix(ncol = 10, nrow = 0))
+for(active_antibody in unique(data$name)){
+  active_data <- data
+  active_data <- active_data %>% filter(name == active_antibody)
+  
+  if(active_antibody == "rbd"){active_data <- active_data %>% filter(collection_before_vax1 == TRUE)}
+  
+  for(active_timepoint in seq_along(timepoints)){
+    data.tmp <- active_data %>%
+      filter(month == timepoints[active_timepoint])
+    
+    formula0 <- formula(paste0("peak_severity_ordinal ~ gender_at_birth + age_factor"))
+    formula1 <- formula(paste0("peak_severity_ordinal ~ value + gender_at_birth + age_factor"))
+ 
+    av <- anova(ordinal::clm(formula0, data = data.tmp),
+                ordinal::clm(formula1, data = data.tmp))
+    form1 <- ordinal::clm(formula1, data = data.tmp)
+    out.tmp <- c(active_antibody, 
+                 active_timepoint, 
+                 av$`Pr(>Chisq)`[2], 
+                 form1$coefficients)
+    names(out.tmp)[1:3] <- c("Target", "Month", "p-value")
+    
+    if(nrow(out) == 0){
+      out <- rbind.data.frame(out, names(out.tmp))
+    }
+    out <- rbind.data.frame(out, out.tmp)
+  }
+}
+colnames(out) <- out[1,]
+out <- out[-1,]
+out[3:ncol(out)] <- lapply(out[3:ncol(out)], function(x) signif(as.numeric(x), digits = 6))
+
+## pval reformatting
+out$p.adj <- p.adjust(out$`p-value`, "fdr")
+out$p.adj.format <- format.pval(out$p.adj, digits = 2)
+out$p.adj.signif <- symnum(out$p.adj, corr = FALSE,
+                           cutpoints = c(0,.0001,.001,.01,.05, .1, 1), 
+                           symbols = c("****","***","**","*","."," "))
+out$Target <- "spk"
+out
+
+## pdfing table
+pdf(paste0(output_dir,"f2_spk_global_pvals_table.pdf"), 
+    width = 15, height = 5)
+grid.table(out)
+dev.off()
+
+
+```

@@ -1,0 +1,263 @@
+---
+title: "Supplementary Figures"
+format: html
+editor: visual
+---
+
+## Load Packages
+
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(UpSetR)
+```
+
+## Load Data
+
+```{r}
+setwd('/stor/work/Ehrlich_COVID19/analysis/APH')
+
+combined_df_annotated <- read_csv('./data/combined_df_annotated_2023-05-09.csv')
+combined_df_annotated_babson <- read_csv('./data/combined_df_annotated_babson_2023-05-09.csv')
+combined_df_annotated_rbd_spike <- read_csv('./data/combined_df_annotated_rbd_spike_2023-05-09.csv')
+
+## set colors
+severity_colors <- c("Control" = "#808080",
+                     "Asymptomatic" = "#00AFBB",
+                     "Mild" = "#E6B600", 
+                     "Severe" = "#FC4E07",
+                     "Critical" = "#88499D")
+severity_colors_hospstatus <- c("Non-Hospitalized" = "#05C012",
+                                "Hospitalized" = "#DF18BC")
+
+output_dir <- "../output/"
+```
+
+## Figure 1: Upset Plot
+
+```{r}
+#| echo: false
+
+data <- combined_df_annotated
+
+## total number of unique patients
+length(unique(data$subject)) # 115 - 17 controls = 98
+
+active_data <- data %>% 
+  filter(assay == "nuc") %>% 
+  mutate(month = factor(month))
+
+## labels
+subjectid_lists_per_monthfactor <- list()
+for(month_factor in levels(active_data$month)){
+  tmp.vector <- active_data %>% filter(month == month_factor) %>% pull(subject)
+  subjectid_lists_per_monthfactor[month_factor] <- list(tmp.vector)
+  
+}
+
+names(subjectid_lists_per_monthfactor) <- c("Controls",
+                                            "1 month", "3 months",
+                                            "3.1 months","4 months","5 months", 
+                                            "6 months", 
+                                            "7 months", 
+                                            "12 months",
+                                            "14 months")
+
+
+pdf(paste0(output_dir, "supp_f1.pdf"), width = 6, height = 5, onefile =F)
+## upset plot
+upset(fromList(subjectid_lists_per_monthfactor),
+      order.by = "freq", 
+      keep.order = TRUE,
+      mainbar.y.label = "Number of Participants",
+      sets.x.label = "Number of Specimens",
+      nsets = 10,
+      sets = c("Controls",
+                "1 month", "3 months",
+                "3.1 months","4 months","5 months", 
+                "6 months", 
+                "7 months", 
+                "12 months",
+                "14 months"))
+dev.off()
+```
+
+## Figure 2: Standard Curves Comparison
+
+![Standard Curves Comparison for S309 and BiolegendMax RBD](standard_curves_s309_biolegend.jpg)
+
+## Figure 3: Correlation Plots
+
+### RBD vs Babson
+
+```{r}
+
+data <- combined_df_annotated_babson
+data$peak_severity <-  factor(data$peak_severity, levels = c("Control","Asymptomatic", "Mild", "Severe", "Critical"))
+
+# overall correlation
+p_rbd_vs_babson <- data %>% 
+  filter(month %in% c(0,1)) %>% #Babson testing only done on the 1st sample collected
+  ggplot(aes(x=Serological_Result_cleaned, y=abs_conc_excel)) + theme_pubr() +
+  geom_point(aes(color=peak_severity), alpha = 1) +
+  scale_color_manual(values=severity_colors) +
+  scale_y_log10(breaks = scales::trans_breaks("log10", function(x) 10^x),
+                labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  scale_x_log10(breaks = scales::trans_breaks("log10", function(x) 10^x),
+                labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  annotation_logticks(sides = "lb", outside = FALSE) + coord_cartesian(clip = "off") +
+  labs(#title = "Commercial RBD ELISA Compared to Babson Diagnostic",
+       #caption = "Note: includes vaccinated and re-infected",
+       x = "Babson Diagnostic (AU)",
+       y = "Anti-RBD IgG (ng/L)") +
+  geom_line(stat="smooth",method = "lm", formula = y ~ x,
+            size = .8,
+            alpha = 0.4) +
+  stat_cor(method = "spearman", label.x = 0.5, label.y = 6)+
+  theme(legend.position="right") +
+  theme(legend.title = element_blank())
+```
+
+### RBD vs Spike
+
+```{r}
+
+data <- combined_df_annotated_rbd_spike
+data$peak_severity <- factor(data$peak_severity, levels = c("Control","Asymptomatic", "Mild", "Severe", "Critical"))
+
+# overall correlation
+p_rbd_vs_spk <- data %>% 
+  ggplot(aes(x=abs_conc_excel_spike, y=abs_conc_excel)) + theme_pubr() +
+  geom_point(aes(color = peak_severity), alpha = 1) +
+  scale_color_manual(values=severity_colors) +
+  scale_y_log10(breaks = scales::trans_breaks("log10", function(x) 10^x),
+                labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  scale_x_log10(breaks = scales::trans_breaks("log10", function(x) 10^x),
+                labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  annotation_logticks(sides = "lb", outside = FALSE) + coord_cartesian(clip = "off") +
+  labs(#title = "Commercial RBD ELISA Compared to In-House Spike (S1 and S2) ELISA",
+       #caption = "Note: includes vaccinated and re-infected",
+       x = "Anti-Spike IgG (ng/L)",
+       y = "Anti-RBD IgG (ng/L)") +
+  geom_line(stat="smooth",method = "lm", formula = y ~ x,
+            size = .8,
+            #linetype ="dashed",
+            alpha = 0.4) +
+  stat_cor(method = "spearman", label.x = 2, label.y = 6)+
+  theme(legend.position="right") +
+  theme(legend.title = element_blank())
+```
+
+### Assemble Plots
+
+```{r}
+
+ggarrange(p_rbd_vs_babson, p_rbd_vs_spk, labels = c("a", "b"), ncol = 2, nrow = 1, common.legend = T)
+ggsave(paste0(output_dir, "supp_f3.pdf"), width = 8, height = 5)
+
+```
+
+## Figure 4: Box Plot
+
+```{r}
+timepoints = c(1,3,6,12)
+data <- combined_df_annotated %>% filter(re_infection == FALSE)
+data$peak_severity  <- factor(data$peak_severity,levels = c("Control",
+                                                          "Asymptomatic",
+                                                          "Mild", 
+                                                          "Severe",
+                                                          "Critical"))
+
+## Initialize a data frame to store sample size information
+sample_sizes <- data.frame(
+  Panel = character(),
+  Target = character(),
+  Month = character(),
+  Peak_Severity = character(),
+  Collection_Before_Vax1 = character(),
+  Sample_Size = integer(),
+  stringsAsFactors = FALSE
+)
+
+## dropping controls
+data <- data[data$peak_severity != "Control",]
+data$peak_severity <- droplevels(data$peak_severity)
+data$peak_severity <- factor(data$peak_severity, 
+                             levels = c("Asymptomatic", "Mild", 
+                                        "Severe", "Critical"),
+                             labels = c("Non-Hospitalized", "Non-Hospitalized", 
+                                        "Hospitalized", "Hospitalized"))
+
+## Modify collection_before_vax1 to ensure the order with 'Before' on top
+data$collection_before_vax1 <- factor(data$collection_before_vax1,
+                                      levels = c(TRUE, FALSE),  # order: Before, After
+                                      labels = c("Before 1st Vaccination", 
+                                                 "After 1st Vaccination"))
+
+## split into nuc and rbd datasets
+data_nuc <- data %>% 
+  filter(assay=='nuc')
+data_rbd <- data %>% 
+  filter(assay=='rbd')
+
+## check that they are ordered in the same manner
+all(data_nuc$ID == data_rbd$ID)
+
+## take the rbd to nuc ratio of antibody titers
+data_rbd_to_nuc <- data_rbd %>% 
+  dplyr::mutate(log_rbd_to_nuc_ratio = log10(abs_conc_excel/data_nuc$abs_conc_excel), 
+         .after=ID)
+
+data_rbd_to_nuc <- data_rbd_to_nuc %>% 
+    mutate(month_f = ifelse(month == "1", paste0(month, " month"),
+                            paste0(month, " months"))) %>%
+    mutate(month_f = factor(month_f, levels = c("1 month", "3 months", 
+                                                "6 months", "12 months")))
+
+## plots
+for(target in unique(data_rbd_to_nuc$assay)){
+  
+  active_data <- data_rbd_to_nuc %>% 
+    filter(month %in% timepoints) %>% 
+    filter(assay == target)
+  
+  ## new facet label names for supp variable
+  month.labs <- c("1 month", "3 months", "6 months","12 months") 
+  names(month.labs) <- c("1", "3", "6", "12")
+  
+  ## calc sample size
+panel_sample_sizes <- active_data %>%
+  group_by(month_f, peak_severity, collection_before_vax1) %>%
+  dplyr::summarize(Sample_Size = n(), .groups = 'drop') %>%
+  mutate(Target = "rbd2nuc")
+sample_sizes <- rbind(sample_sizes, panel_sample_sizes)
+  
+  p <- ggplot(active_data, 
+              aes(x=peak_severity, 
+                  y=log_rbd_to_nuc_ratio, 
+                  color = peak_severity)) + 
+    theme_pubr() +
+    geom_hline(yintercept=0, size=.2, alpha=1, color = "black") +
+    geom_boxplot(outlier.shape=NA) + 
+    geom_quasirandom(size = 0.8) +
+    scale_color_manual(values = severity_colors_hospstatus) +
+    labs(x = "", 
+         y = "Log10(Anti-RBD IgG/Anti-Nucleocapsid IgG)") +
+    scale_x_discrete(labels=c("Non-Hospitalized" = "Non-H", 
+                              "Hospitalized" = "H")) +
+    facet_grid(collection_before_vax1 ~ month, 
+               labeller = labeller(month = month.labs)) +
+    theme(legend.position="none") +
+    geom_pwc(aes(group = peak_severity),
+             y.position = 2,
+             method = "wilcox.test", label = "{p.adj.signif}", #or "{p.adj.format}"
+             p.adjust.method = "bonferroni", p.adjust.by = "panel",
+             hide.ns = TRUE)
+    
+  plot(p)
+  
+  ggsave(paste0(output_dir,"supp_f4.pdf"), 
+         plot = p, width = 5, height = 4, units = "in")
+}
+write_csv(sample_sizes, paste0(output_dir,"supp_f4_samplesizes.csv"))
+```

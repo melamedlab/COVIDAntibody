@@ -1,0 +1,201 @@
+---
+title: "Figure 5"
+format: html
+editor: visual
+---
+
+## Load Packages
+
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(ggbeeswarm)
+```
+
+## Load Data
+
+```{r}
+setwd('/stor/work/Ehrlich_COVID19/analysis/APH')
+combined_df_annotated <- read_csv('./data/combined_df_annotated_2023-05-09.csv')
+combined_df_annotated$peak_severity  <- factor(combined_df_annotated$peak_severity,
+                                               levels = c("Control",
+                                                          "Asymptomatic",
+                                                          "Mild", 
+                                                          "Severe",
+                                                          "Critical"))
+
+severity_colors_woctrl <- c("Asymptomatic" = "#00AFBB",
+                            "Mild" = "#E6B600", 
+                            "Severe" = "#FC4E07",
+                            "Critical" = "#88499D")
+
+output_dir <- "../output/"
+```
+
+## Filtering Data
+
+```{r}
+
+data <- combined_df_annotated %>% filter(re_infection == FALSE)
+timepoints = c(1,3,6,12)
+
+## renaming columns for ease of use
+data$name <- data$assay
+data$value <- data$abs_conc_log10trans
+
+## checking median and mean values by severity
+meadian_mean_value <- data %>%
+  filter(month %in% timepoints) %>%
+  group_by(month, name, peak_severity) %>%
+  dplyr::summarize(median_value = median(value), 
+                   mean_value = mean(value)) 
+
+## checking median and mean values by gender
+median_mean_value <- data %>%
+  filter(month %in% timepoints) %>%
+  group_by(month, name, gender_at_birth) %>%
+  dplyr::summarize(median_value = median(value),
+                   mean_value = mean(value))
+
+## scaling function
+## Only centering aka subtracting mean (center = T), bc when we divide by stand dev (scale = T) the y-axis becomes harder to interpret.  This way one unit increase will correspond to 10-fold increase in untransformed concentration values within severity group
+scale_this <- function(x) as.vector(scale(x,
+                                          center = T,
+                                          scale = F 
+                                          ))
+```
+
+## Panel A and B
+
+```{r}
+
+fig.list <- list()
+
+## plots
+for(target in unique(data$name)){
+  active_data <- data %>% 
+    filter(name == target) %>% 
+    filter(month %in% timepoints)
+  
+  if(target == "rbd"){
+    active_data <- active_data %>% 
+      filter(collection_before_vax1 == TRUE)
+  }
+  
+  ## Calculate and print sample sizes
+  sample_sizes <- active_data %>%
+    group_by(month, name) %>%
+    dplyr::summarize(Sample_Size = n(), .groups = 'drop')
+  print(paste("Sample sizes for target:", target))
+  print(sample_sizes)
+  write_csv(sample_sizes, paste0(output_dir,"f5_",target,"_age_samplesizes.csv"))
+  
+  ## new facet label names for supp variable
+  month.labs <- c("1 month", 
+                  "3 months", 
+                  "6 months",
+                  "12 months") 
+  names(month.labs) <- c("1", "3", "6", "12")
+  
+  p <- active_data %>%
+    mutate(month = factor(month)) %>%
+    group_by(month, name, peak_severity) %>%
+    mutate(scaled_value = scale_this(value)) %>%
+    ggplot(aes(x=calc_age, y=scaled_value)) +
+    geom_point(aes(color = peak_severity)) +
+    facet_grid(~month, labeller = labeller(month = month.labs)) +
+    stat_cor(method = "spearman") +
+    scale_color_manual(values = severity_colors_woctrl) +
+    geom_smooth(method='lm', 
+                formula= y~x, 
+                color = "black",
+                size = 0.3, alpha = 0.2) +
+    theme_pubr() +
+    theme(legend.position="none", legend.title = element_blank()) +
+    ylim(c(-2,4)) +
+    labs(x = "Age", 
+         y = ifelse(target == "nuc",
+                    "Scaled and Normalized \nAnti-N IgG by Severity",
+                    "Scaled and Normalized \nAnti-RBD IgG by Severity"))
+  
+  plot(p)
+
+  fig.list <- c(fig.list, list(p))
+  ggsave(paste0(output_dir,"f5_",target,"_age.pdf"),
+         plot = p, width = 12, height = 2.5, units = "in") 
+}
+
+```
+
+## Panel C and D
+
+```{r}
+my_comparisons <- list(c("F", "M"))
+
+## plots
+for(target in unique(data$name)){
+  active_data <- data %>% 
+    filter(name == target) %>% 
+    filter(month %in% timepoints)
+  
+  if(target == "rbd"){
+    active_data <- active_data %>% 
+      filter(collection_before_vax1 == TRUE)
+    }
+  
+  ## new facet label names for supp variable
+  month.labs <- c("1 month", 
+                  "3 months", 
+                  "6 months",
+                  "12 months") 
+  names(month.labs) <- c("1", "3", "6", "12")
+  
+    ## Calculate and print sample sizes
+  sample_sizes <- active_data %>%
+    group_by(month, name, gender_at_birth) %>%
+    dplyr::summarize(Sample_Size = n(), .groups = 'drop')
+  print(paste("Sample sizes for target:", target))
+  print(sample_sizes)
+  write_csv(sample_sizes, paste0(output_dir,"f5_",target,"_sex_samplesizes.csv"))
+  
+  p <- active_data %>%
+    mutate(gender_at_birth = ifelse(gender_at_birth == "Female","F","M")) %>%
+    mutate(month = factor(month)) %>%
+    group_by(month, name, peak_severity) %>%
+    mutate(scaled_value = scale_this(value)) %>%
+    ggplot(aes(x=gender_at_birth, y=scaled_value)) +
+    geom_boxplot(outlier.shape = NA, color = "gray40", fill = NA) +
+    geom_quasirandom(aes(color = peak_severity), alpha = 1, size = 0.5) +
+    facet_grid(~month, labeller = labeller(month = month.labs)) +
+    ## stat_compare_means(comparisons = my_comparisons, label.y = 2.4) +
+    scale_color_manual(values = severity_colors_woctrl) +
+    theme_pubr() +
+    theme(legend.position="right", legend.title = element_blank()) +
+    ylim(c(-2,2.75)) +
+    labs(x = "Sex", 
+         y = ifelse(target == "nuc",
+                    "Scaled and Normalized \nAnti-N IgG by Severity",
+                    "Scaled and Normalized \nAnti-RBD IgG by Severity"))
+  
+
+  plot(p)
+
+  fig.list <- c(fig.list, list(p))
+  ggsave(paste0(output_dir,"f5_",target,"_sex.pdf"),
+         plot = p, width = 7.5, height = 3, units = "in") 
+}
+
+```
+
+## Arrange Panels
+
+```{r}
+
+p1 <- ggarrange(plotlist = fig.list[1:2], nrow = 2, ncol =1, common.legend = TRUE, 
+                labels = c("a", "b"))
+p2 <- ggarrange(plotlist = fig.list[3:4], nrow = 1, ncol =2, common.legend = TRUE, 
+                labels = c("c", "d"))
+ggarrange(p1, p2, nrow = 2, ncol = 1, heights = c(1.7, 1))
+
+ggsave(paste0(output_dir,"f5_all_panels_assembled_.pdf"), width = 12, height = 9, units = "in") 
+```

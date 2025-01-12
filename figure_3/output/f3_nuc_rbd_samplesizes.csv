@@ -1,0 +1,25 @@
+month_f,peak_severity,collection_before_vax1,Sample_Size,Target
+3 months,Non-Hospitalized,After,11,nuc
+3 months,Non-Hospitalized,Before,36,nuc
+3 months,Hospitalized,After,11,nuc
+3 months,Hospitalized,Before,25,nuc
+6 months,Non-Hospitalized,After,21,nuc
+6 months,Non-Hospitalized,Before,23,nuc
+6 months,Hospitalized,After,25,nuc
+6 months,Hospitalized,Before,14,nuc
+12 months,Non-Hospitalized,After,25,nuc
+12 months,Non-Hospitalized,Before,11,nuc
+12 months,Hospitalized,After,25,nuc
+12 months,Hospitalized,Before,5,nuc
+3 months,Non-Hospitalized,After,11,rbd
+3 months,Non-Hospitalized,Before,36,rbd
+3 months,Hospitalized,After,11,rbd
+3 months,Hospitalized,Before,25,rbd
+6 months,Non-Hospitalized,After,21,rbd
+6 months,Non-Hospitalized,Before,23,rbd
+6 months,Hospitalized,After,25,rbd
+6 months,Hospitalized,Before,14,rbd
+12 months,Non-Hospitalized,After,25,rbd
+12 months,Non-Hospitalized,Before,11,rbd
+12 months,Hospitalized,After,25,rbd
+12 months,Hospitalized,Before,5,rbd

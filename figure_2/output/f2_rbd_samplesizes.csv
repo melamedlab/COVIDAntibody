@@ -1,0 +1,17 @@
+month,peak_severity,n
+1,Asymptomatic,7
+1,Mild,29
+1,Severe,28
+1,Critical,11
+3,Asymptomatic,6
+3,Mild,30
+3,Severe,22
+3,Critical,3
+6,Asymptomatic,3
+6,Mild,20
+6,Severe,12
+6,Critical,2
+12,Asymptomatic,1
+12,Mild,10
+12,Severe,4
+12,Critical,1

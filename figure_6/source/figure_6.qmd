@@ -1,0 +1,122 @@
+---
+title: "Figure 6"
+format: html
+editor: visual
+---
+
+## Load Packages
+
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(ggbeeswarm)
+```
+
+## Load Data
+
+```{r}
+setwd('/stor/work/Ehrlich_COVID19/analysis/APH')
+combined_df_annotated <- read_csv('./data/combined_df_annotated_2023-05-09.csv')
+combined_df_annotated$peak_severity  <- factor(combined_df_annotated$peak_severity,
+                                               levels = c("Control",
+                                                          "Asymptomatic",
+                                                          "Mild", 
+                                                          "Severe",
+                                                          "Critical"))
+
+steroid_status <- c("+steroid" = "#9e084c",
+                    "-steroid" = "#ed6eae")
+
+output_dir <- "../output/"
+
+```
+
+## Filtering Data
+
+```{r}
+
+## filter for non-reinfected and severe/critical only (drop other factor levels)
+data <- combined_df_annotated %>% 
+  filter(re_infection == FALSE, 
+         !(peak_severity %in% c("Control","Asymptomatic","Mild")))
+data$peak_severity <- droplevels(data$peak_severity)
+
+timepoints = c(1,3,6,12)
+
+```
+
+## Panel A and B
+
+```{r}
+## Initialize a data frame to store sample size information
+sample_sizes <- data.frame(
+  Target = character(),
+  Month = character(),
+  Peak_Severity = character(),
+  Sample_Size = integer(),
+  stringsAsFactors = FALSE
+)
+
+## List to store plots
+fig.list <- list()
+
+## New facet label names for 'month' variable
+month.labs <- c("1 month", "3 months", "6 months", "12 months")
+names(month.labs) <- c("1", "3", "6", "12")
+
+## Loop through each target to create violin plots with sub-violins for severity
+for (target in unique(data$assay)) {
+  active_data <- data %>% 
+    filter(month %in% timepoints) %>% 
+    filter(assay == target)
+
+  ## Filter out samples after vaccination for 'rbd'
+  if (target == "rbd") {
+    active_data <- active_data %>% 
+      filter(collection_before_vax1 == TRUE)
+  }
+  
+  ## calc sample size
+  panel_sample_sizes <- active_data %>%
+  group_by(month, immunosuppression_med_reviewed) %>%
+  dplyr::summarize(Sample_Size = n(), .groups = 'drop') %>%
+  mutate(Target = target)
+sample_sizes <- rbind(sample_sizes, panel_sample_sizes)
+
+  ## Create the violin plot with sub-violins for each severity group
+  p <- active_data %>% 
+    mutate(steroid = 
+             ifelse(immunosuppression_med_reviewed == TRUE, "+steroid", "-steroid")) %>% 
+    ggplot(aes(x = steroid, y = abs_conc_excel, color = steroid)) + 
+    theme_pubr() +
+    geom_violin(trim = FALSE) +  # Violin plots
+    geom_quasirandom(size = 0.8) +  # Optional: Add individual data points
+    scale_color_manual(values = steroid_status) +
+    scale_y_log10(breaks = scales::trans_breaks("log10", function(x) 10^x), 
+                  labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+    annotation_logticks(sides = "l", size = 0.08) + # Adjust line thickness here
+    labs(x = "Hospitalized Participants", 
+         y = ifelse(target == "nuc", "Anti-N IgG (ng/L)", "Anti-RBD IgG (ng/L)")) +
+    facet_grid(~month, labeller = labeller(month = month.labs)) +
+    theme(legend.title = element_blank(), legend.position = "none")
+
+  ## Save the plot
+  ggsave(paste0(output_dir, "f6_", target, ".pdf"), 
+         plot = p, width = 10, height = 4, units = "in")
+  
+  fig.list <- c(fig.list, list(p))
+}
+
+# Return the list of plots
+fig.list
+
+write_csv(sample_sizes, paste0(output_dir,"f6_nuc_rbd_samplesizes.csv"))
+```
+
+## Assemble Panels
+
+```{r}
+ggarrange(plotlist = fig.list[1:2], nrow = 2, ncol =1, common.legend = T, labels = c("a", "b"))
+
+ggsave(paste0(output_dir,"f6_all_panels_assembled.pdf"), width = 8, height = 5.5, units = "in")
+```
